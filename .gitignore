@@ -14,6 +14,7 @@ backend/.env
 *.db
 backend/*.db
 pitchiq.db
+!backend/pitchiq.db
 
 # Node / frontend
 frontend/node_modules/
