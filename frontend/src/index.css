@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply min-h-screen bg-[#f6f8fb] text-slate-900 antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+    background-image:
+      radial-gradient(circle at 18% 0%, rgba(14, 165, 233, 0.10), transparent 30%),
+      radial-gradient(circle at 90% 12%, rgba(16, 185, 129, 0.08), transparent 26%),
+      linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f7 100%);
+  }
+
+  * {
+    @apply border-slate-200;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-sky-400 ring-offset-2 ring-offset-white;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-slate-100; }
+  ::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-slate-400; }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-slate-200/80 bg-white/90 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.55)] backdrop-blur-sm;
+  }
+
+  .card-solid {
+    @apply rounded-lg border border-slate-200 bg-white shadow-sm;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-slate-900;
+  }
+
+  .stat-label {
+    @apply text-xs font-medium text-slate-500 uppercase tracking-wider;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+
+  .btn-primary {
+    @apply rounded-lg bg-slate-950 px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-slate-800;
+  }
+
+  .btn-ghost {
+    @apply rounded-lg px-3 py-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .input {
+    @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900
+           placeholder-slate-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-300
+           transition-colors;
+  }
+
+  .select {
+    @apply cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900
+           focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-300
+           transition-colors;
+  }
+
+  .surface {
+    @apply rounded-lg border border-slate-200/80 bg-white/90 shadow-[0_20px_70px_-48px_rgba(15,23,42,0.55)] backdrop-blur;
+  }
+
+  .eyebrow {
+    @apply text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400;
+  }
+}
