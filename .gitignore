@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+*.env
+backend/.env
+
+# Databases / generated local data
+*.db
+backend/*.db
+pitchiq.db
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Logs
+*.log
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
