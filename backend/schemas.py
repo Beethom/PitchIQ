@@ -52,9 +52,37 @@ class CompetitionBreakdown(BaseModel):
     stats: Dict[str, Any]
 
 
+class PlayerMatchLogItem(BaseModel):
+    fixture_id: int
+    date: str
+    opponent: Optional[str] = None
+    competition: Optional[str] = None
+    has_detailed_stats: bool = False
+    stats: Dict[str, Any]
+    rating: Optional[Any] = None
+
+
 class PlayerProfileOut(PlayerOut):
     competitions: List[CompetitionBreakdown] = []
+    match_log: List[PlayerMatchLogItem] = []
     selected_competition: Optional[str] = None
+    sync_pending: bool = False
+
+
+class PlayerFixtureStats(BaseModel):
+    player_id: int
+    source_player_id: Optional[int] = None
+    fixture_id: int
+    fixture_date: Optional[str] = None
+    opponent: Optional[str] = None
+    competition: Optional[str] = None
+    rating: Optional[Any] = None
+    stats: Dict[str, Any]
+    heatmap: List[Dict[str, Any]] = []
+    shots: List[Dict[str, Any]] = []
+    match_incidents: List[Dict[str, Any]] = []
+    is_motm: bool = False
+    event_meta: Dict[str, Any] = {}
 
 
 class CompareOut(BaseModel):
@@ -127,3 +155,5 @@ class WorldCupMatchDetail(BaseModel):
     stats: List[WorldCupMatchStatItem] = []
     lineups: Optional[Dict[str, Any]] = None
     incidents: List[Dict[str, Any]] = []
+    shotmap: List[Dict[str, Any]] = []
+    momentum: List[Dict[str, Any]] = []

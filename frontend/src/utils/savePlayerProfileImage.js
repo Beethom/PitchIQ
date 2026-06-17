@@ -2,9 +2,9 @@ import { localMediaUrl } from './mediaUrl'
 import { playerService } from '../services/playerService'
 import { enrichPlayers } from './playerMetrics'
 import { benchmarkRole } from './positionRoles'
+import { buildPerformanceCaption } from './performanceCaption'
 
 const WIDTH = 1080
-const HEIGHT = 1720
 const SCALE = 2
 
 const PERCENTILE_METRICS = [
@@ -147,52 +147,6 @@ async function measuredPercentileRows(player) {
   }
 }
 
-function scoutRead(stats = {}, percentileRows = []) {
-  const strengths = [...percentileRows]
-    .filter((row) => Number.isFinite(row.percentile) && row.percentile >= 75)
-    .sort((a, b) => b.percentile - a.percentile)
-    .slice(0, 2)
-    .map((row) => row.label.toLowerCase())
-
-  const touches = Number(stats.touchesPerMatch)
-  const lost = Number(stats.possessionLostPerMatch)
-  const passAccuracy = Number(stats.passAccuracy)
-  const dribbleSuccess = Number(stats.dribbleSuccess)
-
-  if (touches >= 55 && lost >= 14 && (stats.goalContributions ?? 0) >= 20) {
-    return `High-risk, high-reward creator: heavy involvement, frequent ball losses, and end-product volume. ${strengths.length ? `Standout benchmark: ${strengths.join(' and ')}.` : ''}`
-  }
-  if (passAccuracy >= 84 && lost <= 10) {
-    return `Secure possession player who protects the ball and keeps actions clean. ${strengths.length ? `Best peer edge: ${strengths.join(' and ')}.` : ''}`
-  }
-  if (dribbleSuccess >= 55 && touches >= 45) {
-    return `Carry-led attacker with enough touch volume to bend phases through take-ons. ${strengths.length ? `Best peer edge: ${strengths.join(' and ')}.` : ''}`
-  }
-  return `${strengths.length ? `Peer standout in ${strengths.join(' and ')}. ` : ''}Measured profile is built from production, ball use, dribbling, defensive activity, and recent form.`
-}
-
-function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
-  ctx.font = `${options.weight ?? 700} ${options.size ?? 22}px Inter, Arial, sans-serif`
-  ctx.fillStyle = options.color ?? '#334155'
-  ctx.textAlign = options.align ?? 'left'
-  ctx.textBaseline = 'alphabetic'
-
-  const words = String(text ?? '').split(/\s+/)
-  let line = ''
-  let lineY = y
-  words.forEach((word) => {
-    const testLine = line ? `${line} ${word}` : word
-    if (ctx.measureText(testLine).width > maxWidth && line) {
-      ctx.fillText(line, x, lineY)
-      line = word
-      lineY += lineHeight
-    } else {
-      line = testLine
-    }
-  })
-  if (line) ctx.fillText(line, x, lineY)
-}
-
 function drawRoundRect(ctx, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2)
   ctx.beginPath()
@@ -260,6 +214,42 @@ function drawDivider(ctx, x, y, width, color = 'rgba(255,255,255,0.16)') {
   ctx.moveTo(x, y)
   ctx.lineTo(x + width, y)
   ctx.stroke()
+}
+
+// The 5 headline stats that best showcase a player, by position. Forwards/mids
+// lead with production; defenders with defensive volume; keepers with shot-stopping.
+function headlineTiles(stats = {}, position) {
+  const isGk = position === 'GK'
+  const isDef = ['CB', 'LB', 'RB'].includes(position)
+
+  if (isGk) {
+    const savePct = stats.totalShotsFaced ? ((stats.saves ?? 0) / stats.totalShotsFaced) * 100 : null
+    return [
+      { label: 'Saves', value: formatNumber(stats.saves), fill: '#eff6ff', valueColor: '#1d4ed8' },
+      { label: 'Save %', value: savePct == null ? '—' : `${formatNumber(savePct, 1)}%`, fill: '#ecfdf5', valueColor: '#15803d' },
+      { label: 'Clean Sheets', value: formatNumber(stats.cleanSheets), fill: '#f0f9ff', valueColor: '#0369a1' },
+      { label: 'Conceded', value: formatNumber(stats.goalsConceded), fill: '#fff7ed', valueColor: '#c2410c' },
+      { label: 'Shots Faced', value: formatNumber(stats.totalShotsFaced), fill: '#f5f3ff', valueColor: '#6d28d9', wide: true },
+    ]
+  }
+
+  if (isDef) {
+    return [
+      { label: 'Tackles', value: formatNumber(stats.tackles), fill: '#eff6ff', valueColor: '#1d4ed8' },
+      { label: 'Interceptions', value: formatNumber(stats.interceptions), fill: '#ecfdf5', valueColor: '#15803d' },
+      { label: 'Clearances', value: formatNumber(stats.clearances), fill: '#fff7ed', valueColor: '#c2410c' },
+      { label: 'Recoveries', value: formatNumber(stats.recoveries), fill: '#f5f3ff', valueColor: '#6d28d9' },
+      { label: 'Aerials Won', value: formatNumber(stats.aerialDuelsWon), fill: '#f0f9ff', valueColor: '#0369a1', wide: true },
+    ]
+  }
+
+  return [
+    { label: 'Goals', value: formatNumber(stats.goals), fill: '#eff6ff', valueColor: '#1d4ed8' },
+    { label: 'Assists', value: formatNumber(stats.assists), fill: '#ecfdf5', valueColor: '#15803d' },
+    { label: 'xG', value: metricValue(stats.xG, 2), fill: '#fff7ed', valueColor: '#c2410c' },
+    { label: 'xA', value: metricValue(stats.xA, 2), fill: '#f5f3ff', valueColor: '#6d28d9' },
+    { label: 'G+A / 90', value: metricValue(((stats.goalContributions ?? 0) / Math.max(stats.minutesPlayed ?? 0, 1)) * 90, 2), fill: '#f0f9ff', valueColor: '#0369a1', wide: true },
+  ]
 }
 
 function drawMetricTile(ctx, label, value, x, y, width, options = {}) {
@@ -470,13 +460,20 @@ function downloadCanvas(canvas, fileName) {
 }
 
 export async function createPlayerProfileCanvas(player) {
+  const stats = player.stats ?? {}
+  const caption = buildPerformanceCaption(player)
+  const highlightLines = caption.lines.slice(0, 8)
+  // Card height grows with the number of highlight lines so nothing clips.
+  const panelH = 156 + highlightLines.length * 44
+  const formY = 1344 + panelH + 24
+  const height = formY + 160 + 70
+
   const canvas = document.createElement('canvas')
   canvas.width = WIDTH * SCALE
-  canvas.height = HEIGHT * SCALE
+  canvas.height = height * SCALE
   const ctx = canvas.getContext('2d')
   ctx.scale(SCALE, SCALE)
 
-  const stats = player.stats ?? {}
   const photoUrl = localMediaUrl(player.photo_url || (player.source_player_id ? `/api/media/player/${player.source_player_id}/image` : ''))
   const logoUrl = localMediaUrl(player.club_logo_url || (player.source_team_id ? `/api/media/team/${player.source_team_id}/image` : ''))
   const [photo, logo] = await Promise.all([
@@ -485,12 +482,12 @@ export async function createPlayerProfileCanvas(player) {
   ])
   const percentileRows = await measuredPercentileRows(player)
 
-  const bg = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT)
+  const bg = ctx.createLinearGradient(0, 0, WIDTH, height)
   bg.addColorStop(0, '#020617')
   bg.addColorStop(0.46, '#082f49')
   bg.addColorStop(1, '#172554')
   ctx.fillStyle = bg
-  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+  ctx.fillRect(0, 0, WIDTH, height)
 
   ctx.globalAlpha = 0.22
   ctx.strokeStyle = '#38bdf8'
@@ -498,7 +495,7 @@ export async function createPlayerProfileCanvas(player) {
   for (let i = -200; i < WIDTH + 300; i += 52) {
     ctx.beginPath()
     ctx.moveTo(i, 0)
-    ctx.lineTo(i + 420, HEIGHT)
+    ctx.lineTo(i + 420, height)
     ctx.stroke()
   }
   ctx.fillStyle = '#22c55e'
@@ -507,7 +504,7 @@ export async function createPlayerProfileCanvas(player) {
   ctx.fill()
   ctx.globalAlpha = 1
 
-  fillRoundRect(ctx, 54, 54, WIDTH - 108, HEIGHT - 108, 40, 'rgba(248,250,252,0.96)')
+  fillRoundRect(ctx, 54, 54, WIDTH - 108, height - 108, 40, 'rgba(248,250,252,0.96)')
   fillRoundRect(ctx, 78, 78, WIDTH - 156, 365, 34, '#0f172a')
 
   const headerGlow = ctx.createLinearGradient(78, 78, WIDTH - 78, 443)
@@ -560,41 +557,88 @@ export async function createPlayerProfileCanvas(player) {
     maxWidth: 530,
   })
 
+  const isGk = player.position === 'GK'
+  const isDef = ['CB', 'LB', 'RB'].includes(player.position)
   let pillX = 376
+  pillX += drawPill(ctx, `${formatNumber(stats.appearances)} APPS`, pillX, 346, { fill: 'rgba(148,163,184,0.22)', color: '#e2e8f0' }) + 10
   pillX += drawPill(ctx, `${formatNumber(stats.minutesPlayed)} MIN`, pillX, 346, { fill: 'rgba(14,165,233,0.22)' }) + 10
   pillX += drawPill(ctx, `${formatNumber(stats.rating, 1)} AVG`, pillX, 346, { fill: 'rgba(34,197,94,0.2)', color: '#bbf7d0' }) + 10
-  drawPill(ctx, `${formatNumber(stats.goalContributions)} G+A`, pillX, 346, { fill: 'rgba(250,204,21,0.18)', color: '#fef08a' })
+  const thirdPill = isGk
+    ? `${formatNumber(stats.cleanSheets)} CS`
+    : isDef
+      ? `${formatNumber((stats.tackles ?? 0) + (stats.interceptions ?? 0))} T+I`
+      : `${formatNumber(stats.goalContributions)} G+A`
+  drawPill(ctx, thirdPill, pillX, 346, { fill: 'rgba(250,204,21,0.18)', color: '#fef08a' })
 
-  drawMetricTile(ctx, 'Goals', formatNumber(stats.goals), 96, 480, 158, { fill: '#eff6ff', valueColor: '#1d4ed8' })
-  drawMetricTile(ctx, 'Assists', formatNumber(stats.assists), 270, 480, 158, { fill: '#ecfdf5', valueColor: '#15803d' })
-  drawMetricTile(ctx, 'xG', metricValue(stats.xG, 2), 444, 480, 158, { fill: '#fff7ed', valueColor: '#c2410c' })
-  drawMetricTile(ctx, 'xA', metricValue(stats.xA, 2), 618, 480, 158, { fill: '#f5f3ff', valueColor: '#6d28d9' })
-  drawMetricTile(ctx, 'G+A / 90', metricValue(((stats.goalContributions ?? 0) / Math.max(stats.minutesPlayed ?? 0, 1)) * 90, 2), 792, 480, 192, { fill: '#f0f9ff', valueColor: '#0369a1' })
+  // Scope badge — makes clear what performance this card represents.
+  const scopeLabel = (player.selected_competition && player.selected_competition !== 'All Competitions')
+    ? player.selected_competition
+    : 'All Competitions'
+  drawText(ctx, scopeLabel.toUpperCase(), WIDTH - 116, 158, {
+    size: 18,
+    weight: 800,
+    color: '#7dd3fc',
+    align: 'right',
+    maxWidth: 460,
+  })
+
+  const tiles = headlineTiles(stats, player.position)
+  const tileX = [96, 270, 444, 618, 792]
+  tiles.forEach((tile, index) => {
+    drawMetricTile(ctx, tile.label, tile.value, tileX[index], 480, tile.wide ? 192 : 158, {
+      fill: tile.fill,
+      valueColor: tile.valueColor,
+    })
+  })
+
+  const savePct = stats.totalShotsFaced ? ((stats.saves ?? 0) / stats.totalShotsFaced) * 100 : null
 
   fillRoundRect(ctx, 96, 640, 436, 210, 30, '#ffffff')
-  drawText(ctx, 'Measured Output', 126, 692, { size: 27, weight: 900, color: '#0f172a' })
-  drawStatLine(ctx, 'Shots', formatNumber(stats.shots), 126, 742, 350)
-  drawStatLine(ctx, 'Shots on target', formatNumber(stats.shotsOnTarget), 126, 792, 350)
-  drawStatLine(ctx, 'Key passes', formatNumber(stats.keyPasses), 126, 842, 350)
+  if (isGk) {
+    drawText(ctx, 'Shot Stopping', 126, 692, { size: 27, weight: 900, color: '#0f172a' })
+    drawStatLine(ctx, 'Saves', formatNumber(stats.saves), 126, 742, 350)
+    drawStatLine(ctx, 'Save accuracy', savePct == null ? '—' : `${metricValue(savePct, 1)}%`, 126, 792, 350)
+    drawStatLine(ctx, 'Clean sheets', formatNumber(stats.cleanSheets), 126, 842, 350)
+  } else {
+    drawText(ctx, 'Measured Output', 126, 692, { size: 27, weight: 900, color: '#0f172a' })
+    drawStatLine(ctx, 'Shots', formatNumber(stats.shots), 126, 742, 350)
+    drawStatLine(ctx, 'Shots on target', formatNumber(stats.shotsOnTarget), 126, 792, 350)
+    drawStatLine(ctx, 'Key passes', formatNumber(stats.keyPasses), 126, 842, 350)
+  }
 
   fillRoundRect(ctx, 556, 640, 428, 210, 30, '#ffffff')
-  drawText(ctx, 'Measured Ball Use', 586, 692, { size: 27, weight: 900, color: '#0f172a' })
+  drawText(ctx, isGk ? 'Distribution' : 'Measured Ball Use', 586, 692, { size: 27, weight: 900, color: '#0f172a' })
   drawStatLine(ctx, 'Touches', formatNumber(stats.touches), 586, 742, 338)
   drawStatLine(ctx, 'Possession lost', formatNumber(stats.possessionLost), 586, 792, 338, { valueColor: '#b91c1c' })
   drawStatLine(ctx, 'Pass accuracy', `${metricValue(stats.passAccuracy, 1)}%`, 586, 842, 338)
 
   fillRoundRect(ctx, 96, 880, 436, 210, 30, '#ffffff')
-  drawText(ctx, 'Measured Dribbling', 126, 932, { size: 27, weight: 900, color: '#0f172a' })
-  drawStatLine(ctx, 'Successful dribbles', formatNumber(stats.dribbles), 126, 982, 350)
-  drawStatLine(ctx, 'Dribble attempts', formatNumber(stats.dribblesAttempted), 126, 1032, 350)
-  drawStatLine(ctx, 'Dribble success', `${metricValue(stats.dribbleSuccess, 1)}%`, 126, 1082, 350)
+  if (isGk) {
+    drawText(ctx, 'Goalkeeping', 126, 932, { size: 27, weight: 900, color: '#0f172a' })
+    drawStatLine(ctx, 'Goals conceded', formatNumber(stats.goalsConceded), 126, 982, 350, { valueColor: '#b91c1c' })
+    drawStatLine(ctx, 'High claims', formatNumber(stats.highClaims), 126, 1032, 350)
+    drawStatLine(ctx, 'Punches', formatNumber(stats.punches), 126, 1082, 350)
+  } else {
+    drawText(ctx, 'Measured Dribbling', 126, 932, { size: 27, weight: 900, color: '#0f172a' })
+    drawStatLine(ctx, 'Successful dribbles', formatNumber(stats.dribbles), 126, 982, 350)
+    drawStatLine(ctx, 'Dribble attempts', formatNumber(stats.dribblesAttempted), 126, 1032, 350)
+    drawStatLine(ctx, 'Dribble success', `${metricValue(stats.dribbleSuccess, 1)}%`, 126, 1082, 350)
+  }
 
   fillRoundRect(ctx, 556, 880, 428, 210, 30, '#ffffff')
-  drawText(ctx, 'Defensive Work', 586, 932, { size: 27, weight: 900, color: '#0f172a' })
-  drawStatLine(ctx, 'Tackles', formatNumber(stats.tackles), 586, 982, 338)
-  drawStatLine(ctx, 'Successful tackles', formatNumber(stats.successfulTackles), 586, 1032, 338)
-  drawStatLine(ctx, 'Recoveries', formatNumber(stats.recoveries), 586, 1082, 338)
-  drawStatLine(ctx, 'Fouls', formatNumber(stats.fouls), 586, 1132, 338)
+  if (isGk) {
+    drawText(ctx, 'Sweeping & Discipline', 586, 932, { size: 27, weight: 900, color: '#0f172a' })
+    drawStatLine(ctx, 'Run outs', formatNumber(stats.runOuts), 586, 982, 338)
+    drawStatLine(ctx, 'Recoveries', formatNumber(stats.recoveries), 586, 1032, 338)
+    drawStatLine(ctx, 'Yellow cards', formatNumber(stats.yellowCards), 586, 1082, 338)
+    drawStatLine(ctx, 'Red cards', formatNumber(stats.redCards), 586, 1132, 338)
+  } else {
+    drawText(ctx, 'Defensive Work', 586, 932, { size: 27, weight: 900, color: '#0f172a' })
+    drawStatLine(ctx, 'Tackles', formatNumber(stats.tackles), 586, 982, 338)
+    drawStatLine(ctx, 'Successful tackles', formatNumber(stats.successfulTackles), 586, 1032, 338)
+    drawStatLine(ctx, 'Recoveries', formatNumber(stats.recoveries), 586, 1082, 338)
+    drawStatLine(ctx, 'Fouls', formatNumber(stats.fouls), 586, 1132, 338)
+  }
 
   fillRoundRect(ctx, 96, 1120, 888, 200, 30, '#ffffff')
   drawText(ctx, 'Measured Peer Percentiles', 126, 1168, { size: 27, weight: 900, color: '#0f172a' })
@@ -607,24 +651,32 @@ export async function createPlayerProfileCanvas(player) {
     drawText(ctx, 'Peer context unavailable', 126, 1228, { size: 20, weight: 800, color: '#64748b' })
   }
 
-  fillRoundRect(ctx, 96, 1344, 888, 112, 30, '#ffffff')
-  drawText(ctx, 'Scout Read', 126, 1388, { size: 27, weight: 900, color: '#0f172a' })
-  wrapText(ctx, scoutRead(stats, percentileRows), 126, 1422, 820, 25, {
-    size: 19,
-    weight: 750,
-    color: '#334155',
+  // Match highlights — the same emoji performance lines as the share caption.
+  fillRoundRect(ctx, 96, 1344, 888, panelH, 30, '#ffffff')
+  drawText(ctx, 'Match Highlights', 126, 1392, { size: 27, weight: 900, color: '#0f172a' })
+  highlightLines.forEach((line, index) => {
+    drawText(ctx, line, 126, 1440 + index * 44, {
+      size: 24,
+      weight: 800,
+      color: '#0f172a',
+      maxWidth: 828,
+    })
   })
+  if (caption.verdict) {
+    const verdictY = 1440 + highlightLines.length * 44 + 8
+    fillRoundRect(ctx, 126, verdictY - 30, 828, 56, 18, '#0f172a')
+    drawText(ctx, caption.verdict, 150, verdictY + 8, {
+      size: 26,
+      weight: 900,
+      color: '#ffffff',
+      maxWidth: 780,
+    })
+  }
 
-  fillRoundRect(ctx, 96, 1480, 888, 160, 30, '#ffffff')
-  drawFormStrip(ctx, player.form ?? [], 126, 1524, 828)
+  fillRoundRect(ctx, 96, formY, 888, 160, 30, '#ffffff')
+  drawFormStrip(ctx, player.form ?? [], 126, formY + 44, 828)
 
-  drawText(ctx, `${metricValue(stats.touchesPerMatch, 1)} touches/match | ${metricValue(stats.possessionLostPerMatch, 1)} lost/match | ${formatNumber(stats.crosses)} crosses | ${formatNumber(stats.finalThirdPasses)} final-third passes`, 96, 1650, {
-    size: 18,
-    weight: 800,
-    color: '#334155',
-    maxWidth: 640,
-  })
-  drawText(ctx, 'Generated by PitchIQ', WIDTH - 96, 1650, {
+  drawText(ctx, 'Generated by PitchIQ', WIDTH - 96, formY + 196, {
     size: 18,
     weight: 800,
     color: '#64748b',

@@ -1,7 +1,7 @@
 import api from './api'
 
 const CACHE_TTL_MS = 10 * 60 * 1000
-const CACHE_VERSION = 'v15'
+const CACHE_VERSION = 'v16'
 const memoryCache = new Map()
 
 function cacheKey(name, params) {
@@ -59,12 +59,21 @@ async function cachedGet(name, url, params, options = {}) {
 }
 
 export const playerService = {
-  async getAll(filters = {}) {
-    return cachedGet('players', '/players/', filters)
+  async getAll(filters = {}, options = {}) {
+    const isWorldCup = filters.league === 'FIFA World Cup' || filters.group === 'world_cup_2026'
+    return cachedGet('players', '/players/', filters, {
+      ttlMs: options.ttlMs ?? (isWorldCup ? 15 * 1000 : CACHE_TTL_MS),
+      force: options.force,
+    })
   },
 
   async getById(id) {
     const { data } = await api.get(`/players/${id}`)
+    return data
+  },
+
+  async getFixtureStats(id, fixtureId) {
+    const { data } = await api.get(`/players/${id}/matches/${fixtureId}`)
     return data
   },
 
@@ -108,7 +117,10 @@ export const playerService = {
   },
 
   async getWorldCupMatchDetail(fixtureId, options = {}) {
-    return cachedGet('worldCupMatchDetail', `/players/world-cup/matches/${fixtureId}`, { fixtureId }, {
+    return cachedGet('worldCupMatchDetail', `/players/world-cup/matches/${fixtureId}`, {
+      fixtureId,
+      force: Boolean(options.force),
+    }, {
       ttlMs: options.ttlMs ?? 5 * 60 * 1000,
       force: options.force,
     })

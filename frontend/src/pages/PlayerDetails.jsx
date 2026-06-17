@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Activity,
@@ -30,15 +30,233 @@ import ErrorMessage from '../components/common/ErrorMessage'
 import { usePlayer } from '../hooks/usePlayers'
 import { POSITION_COLORS } from '../utils/constants'
 import { playerService } from '../services/playerService'
-import { enrichPlayers, enrichStats } from '../utils/playerMetrics'
+import { enrichPlayer, enrichPlayers, enrichStats } from '../utils/playerMetrics'
+import { formatStat } from '../utils/formatStat'
 import { toPer90 } from '../utils/per90'
 import { benchmarkRole } from '../utils/positionRoles'
 import { trackRecentlyViewed } from '../utils/recentlyViewed'
 import { savePlayerProfileImage } from '../utils/savePlayerProfileImage'
+import { saveMatchCard } from '../utils/saveMatchCard'
+import { buildPerformanceCaption } from '../utils/performanceCaption'
+
+// Qualifiers come through labelled "World Cup Qual. <confed>", which reads as
+// another World Cup. Show them by confederation instead.
+function competitionDisplayName(name) {
+  if (!name) return name
+  const qual = name.match(/World Cup Qual\.?\s*(.*)/i)
+  if (qual) {
+    const confed = (qual[1] || '').trim()
+    return confed ? `${confed} Qualifiers` : 'Qualifiers'
+  }
+  return name
+}
+
+const STAT_SUM_KEYS = [
+  'appearances', 'starts', 'minutesPlayed', 'goals', 'assists', 'shots',
+  'shotsOnTarget', 'keyPasses', 'totalPasses', '_accuratePasses', 'touches',
+  'accurateCrosses', 'crosses', 'finalThirdPasses', 'throughPasses', 'dribbles',
+  'possessionLost', 'dispossessed', 'miscontrols', 'recoveries', 'tackles',
+  'successfulTackles', 'fouls', 'interceptions', 'aerialDuelsWon', 'yellowCards',
+  'redCards', 'xG', 'xA', 'bigChancesCreated', 'bigChancesMissed', 'missedChances',
+  'clearances', 'saves', 'goalsConceded', 'totalShotsFaced', 'punches', 'runOuts',
+  'highClaims', 'cleanSheets',
+]
+
+function scopeValueForCompetition(competition) {
+  const name = competitionDisplayName(competition.competition)
+  return `competition:${name}:${competition.season ?? ''}`
+}
+
+function scopeValueForOpponent(opponent) {
+  return `opponent:${opponent}`
+}
+
+// Aggregate a player's per-match stat lines (from match_log) into a single
+// totals object so we can scope a performance to "vs a specific team".
+function aggregateOpponentStats(profile, matches) {
+  const totals = {}
+  STAT_SUM_KEYS.forEach((key) => {
+    totals[key] = matches.reduce((acc, m) => acc + ((m.stats ?? {})[key] ?? 0), 0)
+  })
+  totals.appearances = matches.length
+  totals.starts = matches.filter((m) => ((m.stats ?? {}).minutesPlayed ?? 0) >= 45).length || matches.length
+
+  let ratingSum = 0
+  let ratingCount = 0
+  matches.forEach((m) => {
+    const r = Number(m.rating ?? (m.stats ?? {}).rating)
+    if (Number.isFinite(r) && r > 0) { ratingSum += r; ratingCount += 1 }
+  })
+  if (ratingCount) totals.rating = Math.round((ratingSum / ratingCount) * 10) / 10
+
+  const passAccuracy = totals._accuratePasses && totals.totalPasses
+    ? (totals._accuratePasses / totals.totalPasses) * 100
+    : profile.stats?.passAccuracy
+  return enrichStats({ ...totals, passAccuracy }, profile.position)
+}
+
+function buildScopedPlayer(profile, scope) {
+  if (!profile) return null
+  if (!scope || scope === 'all') return enrichPlayer(profile)
+
+  if (scope.startsWith('opponent:')) {
+    const opponent = scope.slice('opponent:'.length)
+    const matches = (profile.match_log || []).filter((m) => m.opponent === opponent)
+    if (!matches.length) return enrichPlayer(profile)
+    const scopedForm = matches.map((m) => ({
+      match: `vs ${opponent}`,
+      rating: Number(m.rating ?? (m.stats ?? {}).rating ?? 0) || 0,
+      goals: (m.stats ?? {}).goals ?? 0,
+      assists: (m.stats ?? {}).assists ?? 0,
+      date: m.date || '',
+      competition: m.competition || profile.league,
+    }))
+    return enrichPlayer({
+      ...profile,
+      league: `vs ${opponent}`,
+      stats: aggregateOpponentStats(profile, matches),
+      form: scopedForm,
+      selected_competition: `vs ${opponent}`,
+    })
+  }
+
+  const selectedCompetitions = (profile.competitions || []).filter(
+    (competition) => scopeValueForCompetition(competition) === scope,
+  )
+  const selected = selectedCompetitions[0]
+  if (!selected) return enrichPlayer(profile)
+
+  const scopedForm = (profile.form || []).filter(
+    (item) => selectedCompetitions.some((competition) => item.competition === competition.competition),
+  )
+  const scopedStats = selectedCompetitions.length > 1
+    ? aggregateCompetitionStats(profile, selectedCompetitions, 'All')
+    : selected.stats
+
+  return enrichPlayer({
+    ...profile,
+    club: selected.club ?? profile.club,
+    league: selected.competition,
+    season: selected.season ?? profile.season,
+    stats: scopedStats,
+    form: scopedForm,
+    selected_competition: selected.competition,
+  })
+}
+
+function buildScopeOptions(profile) {
+  if (!profile) return [{ value: 'all', label: 'All Competitions' }]
+  const options = new Map()
+  for (const competition of profile.competitions || []) {
+    const value = scopeValueForCompetition(competition)
+    if (options.has(value)) continue
+    options.set(value, {
+      value,
+      label: competition.season ? `${competitionDisplayName(competition.competition)} · ${competition.season}` : competitionDisplayName(competition.competition),
+    })
+  }
+  // Per-opponent scopes from the match log (most recent opponent first).
+  const opponents = new Map()
+  for (const m of profile.match_log || []) {
+    if (!m.opponent || opponents.has(m.opponent)) continue
+    opponents.set(m.opponent, {
+      value: scopeValueForOpponent(m.opponent),
+      label: `vs ${m.opponent}`,
+    })
+  }
+
+  return [
+    { value: 'all', label: 'All Competitions' },
+    ...options.values(),
+    ...opponents.values(),
+  ]
+}
 
 export default function PlayerDetails() {
-  const { id }                     = useParams()
-  const { player, loading, error } = usePlayer(id)
+  const { id }                       = useParams()
+  const [searchParams] = useSearchParams()
+  const fixtureId = searchParams.get('fixture')
+  const navigate = useNavigate()
+  const location = useLocation()
+  // Go back to wherever the user came from (e.g. a match lineup) when there's
+  // in-app history; otherwise fall back to the dashboard.
+  const cameFromApp = location.key !== 'default'
+  const goBack = () => { if (cameFromApp) navigate(-1); else navigate('/') }
+  const backLabel = cameFromApp ? 'Back' : 'Back to Dashboard'
+  const { player: rawPlayer, loading, error } = usePlayer(id)
+  const [scope, setScope] = useState('all')
+  const [fixtureStats, setFixtureStats] = useState(null)
+  const [fixtureLoading, setFixtureLoading] = useState(false)
+  const [fixtureError, setFixtureError] = useState('')
+  const scopeOptions = useMemo(() => buildScopeOptions(rawPlayer), [rawPlayer])
+  const scopedPlayer = useMemo(() => buildScopedPlayer(rawPlayer, scope), [rawPlayer, scope])
+  const player = useMemo(() => {
+    if (!scopedPlayer || !fixtureStats) return scopedPlayer
+    const stats = fixtureStats.stats ?? {}
+    const rating = Number(stats.rating ?? fixtureStats.rating ?? 0)
+    return enrichPlayer({
+      ...scopedPlayer,
+      league: fixtureStats.competition || scopedPlayer.league,
+      season: fixtureStats.fixture_date || scopedPlayer.season,
+      stats,
+      form: [{
+        match: fixtureStats.opponent ? `vs ${fixtureStats.opponent}` : 'This match',
+        rating: Number.isFinite(rating) ? rating : 0,
+        goals: stats.goals ?? 0,
+        assists: stats.assists ?? 0,
+        date: fixtureStats.fixture_date || '',
+        competition: fixtureStats.competition || scopedPlayer.league,
+      }],
+      selected_competition: 'Match Stats',
+    })
+  }, [scopedPlayer, fixtureStats])
+
+  // Default the competition filter to the tournament the user navigated in
+  // through (the route id matches one competition row), so the profile shows
+  // that tournament's stats instead of the combined "All Competitions" totals.
+  // Only set the default once per player so a background re-fetch (or the user
+  // changing the dropdown) doesn't clobber the current selection.
+  const scopeDefaultedFor = useRef(null)
+  useEffect(() => {
+    if (fixtureId) return
+    if (!rawPlayer) return
+    if (scopeDefaultedFor.current === id) return
+    scopeDefaultedFor.current = id
+    const match = (rawPlayer.competitions || []).find(
+      (competition) => String(competition.id) === String(id),
+    )
+    setScope(match ? scopeValueForCompetition(match) : 'all')
+  }, [fixtureId, id, rawPlayer])
+
+  useEffect(() => {
+    if (!fixtureId) {
+      setFixtureStats(null)
+      setFixtureError('')
+      setFixtureLoading(false)
+      return undefined
+    }
+
+    let active = true
+    setFixtureLoading(true)
+    setFixtureError('')
+    playerService.getFixtureStats(id, fixtureId)
+      .then((data) => {
+        if (active) setFixtureStats(data)
+      })
+      .catch((err) => {
+        if (active) {
+          setFixtureStats(null)
+          setFixtureError(err?.response?.data?.detail || err?.message || 'Match stats are not available yet.')
+        }
+      })
+      .finally(() => {
+        if (active) setFixtureLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [fixtureId, id])
   const [savingImage, setSavingImage] = useState(false)
   const [imageSaveError, setImageSaveError] = useState('')
   const [stickyVisible, setStickyVisible] = useState(false)
@@ -67,6 +285,9 @@ export default function PlayerDetails() {
     ? Number(player.stats.rating).toFixed(1)
     : (player.form.reduce((s, f) => s + f.rating, 0) / Math.max(player.form.length, 1)).toFixed(1)
   const competitions = player.competitions ?? []
+  const displayLeague = !fixtureId && player.league === 'All Competitions'
+    ? player.primary_league || player.league
+    : player.league
   const hasEstimatedForm = (player.form ?? []).some((item) => item.estimated)
   const hasExactForm = (player.form ?? []).length >= 5 && !hasEstimatedForm
 
@@ -77,6 +298,31 @@ export default function PlayerDetails() {
       await savePlayerProfileImage(player)
     } catch (err) {
       setImageSaveError(err?.message || 'Could not save profile image')
+    } finally {
+      setSavingImage(false)
+    }
+  }
+
+  // The match card uses real per-match positional data, which only exists for a
+  // single fixture view.
+  const isMatchScope = Boolean(fixtureId) && Boolean(fixtureStats)
+  async function handleSaveMatchCard() {
+    setSavingImage(true)
+    setImageSaveError('')
+    try {
+      await saveMatchCard(player, {
+        opponent: fixtureStats?.opponent,
+        competition: fixtureStats?.competition || player.league,
+        date: fixtureStats?.fixture_date,
+        heatmap: fixtureStats?.heatmap || [],
+        shots: fixtureStats?.shots || [],
+        incidents: fixtureStats?.match_incidents || [],
+        isMotm: fixtureStats?.is_motm || false,
+        playerSourceId: fixtureStats?.source_player_id,
+        event: fixtureStats?.event_meta || {},
+      })
+    } catch (err) {
+      setImageSaveError(err?.message || 'Could not save match card')
     } finally {
       setSavingImage(false)
     }
@@ -94,15 +340,15 @@ export default function PlayerDetails() {
       >
         <div className="border-b border-slate-200/80 bg-white/90 px-4 py-2.5 backdrop-blur-xl shadow-sm">
           <div className="max-w-7xl mx-auto flex items-center gap-3">
-            <Link to="/" className="text-slate-400 hover:text-slate-700 transition-colors">
+            <button type="button" onClick={goBack} className="text-slate-400 hover:text-slate-700 transition-colors">
               <ArrowLeft size={16} />
-            </Link>
+            </button>
             <PlayerAvatar player={player} size="sm" />
             <span className="font-black text-slate-950 text-sm">{player.name}</span>
             <span className={`badge text-xs ${POSITION_COLORS[player.position] ?? 'bg-slate-100 text-slate-600'}`}>{player.position}</span>
             <span className="text-slate-400 text-xs hidden sm:inline">{player.club}</span>
             <span className="text-slate-300 hidden sm:inline">·</span>
-            <span className="text-slate-400 text-xs hidden sm:inline">{player.league}</span>
+            <span className="text-slate-400 text-xs hidden sm:inline">{competitionDisplayName(displayLeague)}</span>
             <div className="ml-auto flex items-center gap-3 text-xs text-slate-500 font-semibold">
               {player.position === 'GK' ? (
                 <>
@@ -135,12 +381,13 @@ export default function PlayerDetails() {
         className="bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 text-white px-4 sm:px-6 lg:px-8 py-8"
       >
         <div className="max-w-7xl mx-auto">
-          <Link
-            to="/"
+          <button
+            type="button"
+            onClick={goBack}
             className="inline-flex items-center gap-2 text-sm text-white/70 hover:text-white mb-5 transition-colors"
           >
-            <ArrowLeft size={15} /> Back to Dashboard
-          </Link>
+            <ArrowLeft size={15} /> {backLabel}
+          </button>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
             {/* Avatar */}
@@ -181,12 +428,24 @@ export default function PlayerDetails() {
                 </div>
                 <div>
                   <p className="font-semibold text-white">{player.club}</p>
-                  <p className="text-xs text-white/60">{player.league}</p>
+                  <p className="text-xs text-white/60">{competitionDisplayName(displayLeague)}</p>
                 </div>
               </div>
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {!fixtureId && scopeOptions.length > 1 && (
+                <select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value)}
+                  aria-label="Filter by competition"
+                  className="rounded-xl border border-white/20 bg-white/15 px-4 py-2 text-sm font-medium text-white backdrop-blur transition-colors hover:bg-white/25 focus:outline-none focus:ring-2 focus:ring-white/40 [&>option]:text-slate-900"
+                >
+                  {scopeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              )}
               <button
                 type="button"
                 onClick={handleSaveImage}
@@ -195,6 +454,16 @@ export default function PlayerDetails() {
               >
                 <Download size={14} /> {savingImage ? 'Saving...' : 'Save scout card'}
               </button>
+              {isMatchScope && (
+                <button
+                  type="button"
+                  onClick={handleSaveMatchCard}
+                  disabled={savingImage}
+                  className="flex items-center gap-2 bg-white text-slate-900 hover:bg-white/90 font-bold px-4 py-2 rounded-xl transition-colors text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Download size={14} /> Match card
+                </button>
+              )}
               <Link
                 to="/compare"
                 className="flex items-center gap-2 bg-white/15 hover:bg-white/25 border border-white/20 text-white font-medium px-4 py-2 rounded-xl transition-colors text-sm backdrop-blur"
@@ -211,9 +480,10 @@ export default function PlayerDetails() {
             </p>
           )}
 
-          {/* Quick stats bar — all-competitions totals */}
-          <div className="grid grid-cols-3 sm:grid-cols-8 gap-4 mt-7 pt-6 border-t border-white/20">
-            {(player.position === 'GK' ? [
+          {/* Quick stats bar */}
+          {(!fixtureId || fixtureStats) && (
+            <div className="grid grid-cols-3 sm:grid-cols-8 gap-4 mt-7 pt-6 border-t border-white/20">
+              {(player.position === 'GK' ? [
               { label: 'Scope',       value: player.league },
               { label: 'Apps',        value: player.stats.appearances },
               { label: 'Saves',       value: player.stats.saves ?? '—' },
@@ -251,8 +521,9 @@ export default function PlayerDetails() {
                 <p className="text-xl font-bold text-white">{value}</p>
                 <p className="text-xs text-white/60 mt-0.5 uppercase tracking-wider">{label}</p>
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
         </div>
       </motion.div>
@@ -264,43 +535,72 @@ export default function PlayerDetails() {
           transition={{ delay: 0.1 }}
           className="space-y-8"
         >
-          <ChartCard title="Recent Form" subtitle="Match rating over last 5 appearances">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <SharePerformance player={player} />
+
+          {!fixtureId && (
+            <>
+              <ChartCard title="Recent Form" subtitle="Match rating over last 5 appearances">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-700">
+                      {hasExactForm ? 'Exact last-five form synced' : hasEstimatedForm ? 'Estimated form is showing' : 'Recent form needs sync'}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      {player.last_synced_at ? `Last synced ${new Date(player.last_synced_at).toLocaleString()}` : 'No exact form sync recorded yet'}
+                    </p>
+                  </div>
+                </div>
+                <FormTrendChart player={player} />
+              </ChartCard>
+
+              <CompetitionOverview player={player} competitions={competitions} />
+
+              <PlayerReportCard player={player} competitions={competitions} />
+
+              {/* Competition breakdown */}
               <div>
-                <p className="text-sm font-medium text-slate-700">
-                  {hasExactForm ? 'Exact last-five form synced' : hasEstimatedForm ? 'Estimated form is showing' : 'Recent form needs sync'}
-                </p>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  {player.last_synced_at ? `Last synced ${new Date(player.last_synced_at).toLocaleString()}` : 'No exact form sync recorded yet'}
-                </p>
+                <div className="mb-4">
+                  <h2 className="text-base font-semibold text-slate-900">Competition Rows</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">
+                    Domestic, European, and international rows stay separate underneath the combined profile.
+                  </p>
+                </div>
+                <CompetitionBreakdown competitions={competitions} />
               </div>
-            </div>
-            <FormTrendChart player={player} />
-          </ChartCard>
 
-          <CompetitionOverview player={player} competitions={competitions} />
+              <PlayerMatchLog matches={player.match_log ?? []} />
+            </>
+          )}
 
-          <PlayerReportCard player={player} competitions={competitions} />
-
-          {/* Competition breakdown */}
+          {/* Detailed totals */}
           <div>
             <div className="mb-4">
-              <h2 className="text-base font-semibold text-slate-900">Competition Rows</h2>
+              <h2 className="text-base font-semibold text-slate-900">
+                {fixtureId && fixtureStats?.opponent
+                  ? `${player.name} vs ${fixtureStats.opponent}`
+                  : fixtureId
+                    ? `${player.name} Match Stats`
+                    : 'All Competitions Total'}
+              </h2>
               <p className="text-sm text-slate-500 mt-0.5">
-                Domestic, European, and international rows stay separate underneath the combined profile.
+                {fixtureId
+                  ? fixtureStats?.opponent
+                    ? 'Stats from this match only.'
+                    : 'Only this fixture.'
+                  : 'Combined stats across every tournament — the number that matters for transfer comparisons'}
               </p>
             </div>
-            <CompetitionBreakdown competitions={competitions} />
+            {fixtureLoading ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm font-medium text-slate-500 shadow-sm">
+                Loading match stats...
+              </div>
+            ) : fixtureError ? (
+              <ErrorMessage message={fixtureError} />
+            ) : (
+              <PlayerStatGrid stats={player.stats} position={player.position} />
+            )}
           </div>
 
-          {/* All-competitions totals */}
-          <div>
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-slate-900">All Competitions Total</h2>
-              <p className="text-sm text-slate-500 mt-0.5">Combined stats across every tournament — the number that matters for transfer comparisons</p>
-            </div>
-            <PlayerStatGrid stats={player.stats} position={player.position} />
-          </div>
         </motion.div>
       </PageContainer>
     </div>
@@ -316,52 +616,14 @@ function playerGroup(player) {
 }
 
 function aggregateCompetitionStats(player, competitions, scope) {
-  if (scope === 'All' || !competitions.length) return player.stats ?? {}
+  if (!competitions.length) return player.stats ?? {}
 
-  const relevant = competitions.filter((comp) => competitionGroup(comp.competition).label === scope)
+  const relevant = scope === 'All'
+    ? competitions
+    : competitions.filter((comp) => competitionGroup(comp.competition).label === scope)
   if (!relevant.length) return null
 
-  const sumKeys = [
-    'appearances',
-    'starts',
-    'minutesPlayed',
-    'goals',
-    'assists',
-    'shots',
-    'shotsOnTarget',
-    'keyPasses',
-    'totalPasses',
-    '_accuratePasses',
-    'touches',
-    'accurateCrosses',
-    'crosses',
-    'finalThirdPasses',
-    'throughPasses',
-    'dribbles',
-    'possessionLost',
-    'dispossessed',
-    'miscontrols',
-    'recoveries',
-    'tackles',
-    'successfulTackles',
-    'fouls',
-    'interceptions',
-    'aerialDuelsWon',
-    'yellowCards',
-    'redCards',
-    'xG',
-    'xA',
-    'bigChancesCreated',
-    'bigChancesMissed',
-    'missedChances',
-    'clearances',
-    'saves',
-    'goalsConceded',
-    'totalShotsFaced',
-    'punches',
-    'runOuts',
-    'highClaims',
-  ]
+  const sumKeys = STAT_SUM_KEYS
 
   const totals = {}
   sumKeys.forEach((key) => {
@@ -673,6 +935,49 @@ function barTone(percentile) {
   return 'bg-orange-500'
 }
 
+function SharePerformance({ player }) {
+  const [copied, setCopied] = useState(false)
+  const caption = useMemo(() => buildPerformanceCaption(player), [player])
+
+  if (!caption.lines.length) return null
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(caption.text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* clipboard blocked — user can still select the text */
+    }
+  }
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div>
+          <h2 className="text-base font-black text-slate-950">Share Performance</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Ready-to-post highlight summary for this scope.</p>
+        </div>
+        <button
+          type="button"
+          onClick={copy}
+          className={`shrink-0 rounded-xl px-4 py-2 text-sm font-bold shadow-sm transition-colors ${
+            copied ? 'bg-emerald-600 text-white' : 'bg-slate-950 text-white hover:bg-slate-800'
+          }`}
+        >
+          {copied ? 'Copied!' : 'Copy caption'}
+        </button>
+      </div>
+      <pre className="whitespace-pre-wrap px-5 py-4 font-sans text-[15px] leading-7 text-slate-800">
+        <span className="font-black text-slate-950">{caption.header}</span>
+        {'\n\n'}
+        {caption.lines.join('\n')}
+        {caption.verdict ? `\n\n${caption.verdict}` : ''}
+      </pre>
+    </section>
+  )
+}
+
 function PlayerReportCard({ player, competitions }) {
   const scopes = useMemo(() => availableReportScopes(competitions), [competitions])
   const [scope, setScope] = useState(scopes[0] ?? 'All')
@@ -742,6 +1047,9 @@ function PlayerReportCard({ player, competitions }) {
       rank,
     }
   })
+  const displayLeague = player.league === 'All Competitions'
+    ? player.primary_league || player.league
+    : player.league
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
@@ -761,7 +1069,7 @@ function PlayerReportCard({ player, competitions }) {
             </div>
           </div>
           <p className="mt-3 text-sm text-slate-500">
-            {player.club} · {player.league} · {player.season} · benchmarked vs {role}
+            {player.club} · {competitionDisplayName(displayLeague)} · {player.season} · benchmarked vs {role}
           </p>
         </div>
 
@@ -1140,7 +1448,7 @@ function CompetitionOverview({ player, competitions }) {
               <div key={comp.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate font-bold text-slate-950">{comp.competition}</p>
+                    <p className="truncate font-bold text-slate-950">{competitionDisplayName(comp.competition)}</p>
                     <p className="mt-1 truncate text-xs text-slate-500">{comp.club} · {comp.season}</p>
                   </div>
                   <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${group.tone}`}>
@@ -1227,7 +1535,7 @@ function CompetitionBreakdown({ competitions }) {
                   className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors"
                 >
                   <td className="px-4 py-3.5">
-                    <p className="font-semibold text-slate-900 leading-tight">{comp.competition}</p>
+                    <p className="font-semibold text-slate-900 leading-tight">{competitionDisplayName(comp.competition)}</p>
                     <p className="text-xs text-slate-500 mt-0.5 truncate">{comp.club} · {comp.season}</p>
                   </td>
                   {cols.map(({ key, fmt, highlight }) => (
@@ -1288,5 +1596,74 @@ function TotalRow({ competitions, cols }) {
         </td>
       ))}
     </tr>
+  )
+}
+
+function PlayerMatchLog({ matches }) {
+  if (!matches.length) return null
+
+  const cols = [
+    { label: 'Min', key: 'minutesPlayed', fmt: (v) => v ?? 0 },
+    { label: 'Rating', key: 'rating', fmt: (v) => v != null ? Number(v).toFixed(1) : '—', highlight: true },
+    { label: 'G', key: 'goals', fmt: (v) => v ?? 0 },
+    { label: 'A', key: 'assists', fmt: (v) => v ?? 0 },
+    { label: 'xG', key: 'xG', detail: true, fmt: (v) => v != null ? formatStat('xG', v) : '—' },
+    { label: 'xA', key: 'xA', detail: true, fmt: (v) => v != null ? formatStat('xA', v) : '—' },
+    { label: 'Big Created', key: 'bigChancesCreated', detail: true, fmt: (v) => v ?? '—' },
+    { label: 'Touches', key: 'touches', detail: true, fmt: (v) => v ?? '—' },
+    { label: 'Passes', key: 'totalPasses', detail: true, fmt: (v) => v ?? '—' },
+    { label: 'Tackles', key: 'tackles', detail: true, fmt: (v) => v ?? '—' },
+  ]
+
+  return (
+    <section>
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-slate-900">Match Log</h2>
+        <p className="text-sm text-slate-500 mt-0.5">Fixture-by-fixture evidence behind the totals.</p>
+      </div>
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="min-w-[220px] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Match
+                </th>
+                {cols.map(({ label }) => (
+                  <th key={label} className="whitespace-nowrap px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matches.map((match) => {
+                const stats = match.stats ?? {}
+                return (
+                  <tr key={`${match.fixture_id}-${match.date}`} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50">
+                    <td className="px-4 py-3.5">
+                      <p className="font-semibold text-slate-900">{match.opponent ? `vs ${match.opponent}` : 'Match'}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {match.date || 'Date TBD'} · {competitionDisplayName(match.competition)}
+                      </p>
+                    </td>
+                    {cols.map(({ key, fmt, highlight, detail }) => (
+                      <td
+                        key={key}
+                        className={`px-3 py-3.5 text-center font-semibold tabular-nums ${
+                          highlight ? 'text-indigo-600' : 'text-slate-800'
+                        }`}
+                      >
+                        {fmt(detail && !match.has_detailed_stats ? undefined : stats[key] ?? (key === 'rating' ? match.rating : undefined))}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   )
 }

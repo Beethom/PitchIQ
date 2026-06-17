@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { GitCompare, Info, Users } from 'lucide-react'
+import { Download, Flame, GitCompare, Info, Share2, Trophy, Users } from 'lucide-react'
 import PageContainer from '../components/layout/PageContainer'
 import PlayerSelector from '../components/player/PlayerSelector'
 import PlayerAvatar from '../components/player/PlayerAvatar'
@@ -109,6 +110,8 @@ export default function ComparePlayers() {
             {/* Insight summary */}
             <ComparisonSummary playerA={playerA} playerB={playerB} />
 
+            <DebateMode playerA={playerA} playerB={playerB} />
+
             <PeerBenchmark playerA={playerA} playerB={playerB} />
 
             {/* Charts */}
@@ -179,6 +182,198 @@ function compareFormat(key, value) {
   if (key.endsWith('P90')) return value.toFixed(2)
   if (key === 'minutesPlayed') return Math.round(value).toLocaleString()
   return formatStat(key, value)
+}
+
+function debateScore(player) {
+  const stats = player.stats ?? {}
+  return {
+    output: (toPer90(stats.goalContributions ?? 0, stats.minutesPlayed) ?? 0) * 34,
+    creation: (toPer90(stats.chancesCreated ?? stats.keyPasses ?? 0, stats.minutesPlayed) ?? 0) * 22 + (stats.bigChancesCreated ?? 0) * 1.2,
+    control: (stats.passAccuracy ?? 0) * 0.18 + (toPer90(stats.touches ?? 0, stats.minutesPlayed) ?? 0) * 0.24,
+    defense: (toPer90((stats.tackles ?? 0) + (stats.interceptions ?? 0) + (stats.recoveries ?? 0), stats.minutesPlayed) ?? 0) * 8,
+    form: (stats.rating ?? 0) * 7,
+  }
+}
+
+function debateRows(playerA, playerB) {
+  const scoreA = debateScore(playerA)
+  const scoreB = debateScore(playerB)
+  return [
+    { label: 'Output', key: 'output', body: 'goals, assists, and end product per 90' },
+    { label: 'Creation', key: 'creation', body: 'chances, big chances, and key-pass volume' },
+    { label: 'Control', key: 'control', body: 'touch volume and pass security' },
+    { label: 'Defensive edge', key: 'defense', body: 'tackles, interceptions, recoveries per 90' },
+    { label: 'Form', key: 'form', body: 'rating and recent impact signal' },
+  ].map((row) => ({
+    ...row,
+    valueA: scoreA[row.key],
+    valueB: scoreB[row.key],
+    winner: scoreA[row.key] === scoreB[row.key] ? null : scoreA[row.key] > scoreB[row.key] ? 'A' : 'B',
+  }))
+}
+
+function DebateMode({ playerA, playerB }) {
+  const [copied, setCopied] = useState(false)
+  const rows = debateRows(playerA, playerB)
+  const winsA = rows.filter((row) => row.winner === 'A').length
+  const winsB = rows.filter((row) => row.winner === 'B').length
+  const winner = winsA === winsB ? null : winsA > winsB ? playerA : playerB
+  const loser = winner?.id === playerA.id ? playerB : playerA
+  const debateText = debateSummaryText(playerA, playerB, rows, winner)
+
+  async function copyDebate() {
+    try {
+      await navigator.clipboard.writeText(debateText)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  function downloadDebateCard() {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1200
+    canvas.height = 675
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#020617'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillStyle = '#0f172a'
+    ctx.fillRect(32, 32, 1136, 611)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '800 54px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.fillText('PitchIQ Debate Mode', 72, 115)
+    ctx.font = '900 70px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.fillText(shortName(playerA.name), 72, 245)
+    ctx.fillText(shortName(playerB.name), 760, 245)
+    ctx.font = '700 34px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.fillStyle = '#38bdf8'
+    ctx.fillText(`${winsA} category wins`, 72, 300)
+    ctx.fillStyle = '#34d399'
+    ctx.fillText(`${winsB} category wins`, 760, 300)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '800 44px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.fillText(winner ? `${shortName(winner.name)} has the edge` : 'Debate is too close to call', 72, 405)
+    ctx.fillStyle = '#cbd5e1'
+    ctx.font = '500 26px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+    wrapCanvasText(ctx, debateText, 72, 465, 1040, 34)
+    const link = document.createElement('a')
+    link.href = canvas.toDataURL('image/png')
+    link.download = `${playerA.name}-vs-${playerB.name}-debate.png`.replace(/[^a-z0-9.-]+/gi, '-')
+    link.click()
+  }
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-950 p-5 text-white sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="rounded-2xl bg-white/10 p-3 text-amber-300">
+            <Flame size={22} />
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/45">Debate Mode</p>
+            <h2 className="mt-1 text-2xl font-black">
+              {winner ? `${winner.name} has the edge` : 'Too close to call'}
+            </h2>
+            <p className="mt-1 text-sm text-white/60">
+              Built for fan arguments: output, creation, control, role fit, and form.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={copyDebate} className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15">
+            <Share2 size={15} /> {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button type="button" onClick={downloadDebateCard} className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15">
+            <Download size={15} /> Card
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-5 lg:grid-cols-[1fr_1.2fr_1fr]">
+        <DebatePlayer player={playerA} wins={winsA} tone="sky" />
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.key} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-black text-slate-950">{row.label}</span>
+                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${
+                  row.winner === 'A' ? 'bg-sky-100 text-sky-700' : row.winner === 'B' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {row.winner === 'A' ? shortName(playerA.name) : row.winner === 'B' ? shortName(playerB.name) : 'Even'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{row.body}</p>
+            </div>
+          ))}
+        </div>
+        <DebatePlayer player={playerB} wins={winsB} tone="emerald" />
+      </div>
+
+      <div className="border-t border-slate-100 bg-slate-50 p-5">
+        <div className="flex items-start gap-3">
+          <Trophy size={18} className="mt-0.5 text-amber-500" />
+          <p className="text-sm leading-6 text-slate-700">
+            {winner
+              ? `${winner.name} wins this argument ${Math.max(winsA, winsB)}-${Math.min(winsA, winsB)} on category edge. ${loser.name} can still win the debate if the context values their strongest category more.`
+              : `${playerA.name} and ${playerB.name} split the argument. Use role fit and minutes context as the tiebreaker.`}
+          </p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function DebatePlayer({ player, wins, tone }) {
+  const stats = player.stats ?? {}
+  const toneClass = tone === 'sky' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'
+  return (
+    <div className="rounded-2xl border border-slate-100 p-4">
+      <div className="flex items-center gap-3">
+        <PlayerAvatar player={player} size="lg" />
+        <div className="min-w-0">
+          <p className="truncate text-lg font-black text-slate-950">{player.name}</p>
+          <p className="truncate text-xs font-semibold text-slate-500">{player.club} · {player.position}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <DebateMini label="Wins" value={wins} toneClass={toneClass} />
+        <DebateMini label="Rating" value={stats.rating != null ? Number(stats.rating).toFixed(1) : '—'} toneClass={toneClass} />
+        <DebateMini label="G+A" value={stats.goalContributions ?? 0} toneClass={toneClass} />
+        <DebateMini label="Chances" value={stats.chancesCreated ?? stats.keyPasses ?? 0} toneClass={toneClass} />
+      </div>
+    </div>
+  )
+}
+
+function DebateMini({ label, value, toneClass }) {
+  return (
+    <div className={`rounded-xl px-3 py-2 text-center ${toneClass}`}>
+      <p className="text-lg font-black">{value}</p>
+      <p className="text-[10px] font-black uppercase tracking-[0.14em] opacity-70">{label}</p>
+    </div>
+  )
+}
+
+function debateSummaryText(playerA, playerB, rows, winner) {
+  const rowText = rows.map((row) => `${row.label}: ${row.winner === 'A' ? playerA.name : row.winner === 'B' ? playerB.name : 'Even'}`).join(' | ')
+  return `PitchIQ debate: ${playerA.name} vs ${playerB.name}. Verdict: ${winner ? `${winner.name} has the edge` : 'too close to call'}. ${rowText}.`
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(' ')
+  let line = ''
+  for (const word of words) {
+    const testLine = line ? `${line} ${word}` : word
+    if (ctx.measureText(testLine).width > maxWidth && line) {
+      ctx.fillText(line, x, y)
+      line = word
+      y += lineHeight
+    } else {
+      line = testLine
+    }
+  }
+  if (line) ctx.fillText(line, x, y)
 }
 
 function shortName(name = '') {

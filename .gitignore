@@ -28,3 +28,6 @@ frontend/dist/
 .vscode/
 .idea/
 .claude/
+
+# Runtime media cache (regenerated on demand)
+backend/media_cache/

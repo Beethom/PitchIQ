@@ -94,8 +94,9 @@ export default function WorldCupMatches() {
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return sortMatchesByDate(rows).filter((row) => {
+      const statusType = effectiveStatusType(row, now)
       if (statusFilter === 'today' && !isTodayMatch(row)) return false
-      if (!['all', 'today'].includes(statusFilter) && row.status_type !== statusFilter) return false
+      if (!['all', 'today'].includes(statusFilter) && statusType !== statusFilter) return false
       if (groupFilter !== 'all' && row.group !== groupFilter) return false
       if (!needle) return true
 
@@ -110,15 +111,15 @@ export default function WorldCupMatches() {
 
       return haystack.includes(needle)
     })
-  }, [rows, statusFilter, groupFilter, query])
+  }, [rows, statusFilter, groupFilter, query, now])
 
   const summary = useMemo(() => ({
     today: rows.filter((row) => isTodayMatch(row)).length,
-    live: rows.filter((row) => row.status_type === 'inprogress').length,
-    upcoming: rows.filter((row) => row.status_type === 'notstarted').length,
-    finished: rows.filter((row) => row.status_type === 'finished').length,
+    live: rows.filter((row) => effectiveStatusType(row, now) === 'inprogress').length,
+    upcoming: rows.filter((row) => effectiveStatusType(row, now) === 'notstarted').length,
+    finished: rows.filter((row) => effectiveStatusType(row, now) === 'finished').length,
     synced: rows.filter((row) => row.syncedMatch).length,
-  }), [rows])
+  }), [rows, now])
 
   useEffect(() => {
     if (summary.live <= 0) return undefined
@@ -127,7 +128,7 @@ export default function WorldCupMatches() {
   }, [loadData, summary.live])
 
   useEffect(() => {
-    if (!rows.some((row) => row.status_type === 'notstarted' && row.timestamp)) return undefined
+    if (!rows.some((row) => effectiveStatusType(row, Date.now()) === 'notstarted' && row.timestamp)) return undefined
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [rows])
@@ -297,9 +298,11 @@ function SummaryTile({ label, value }) {
 }
 
 function MatchCard({ fixture, now, language, onOpen }) {
-  const hasStarted = fixture.status_type !== 'notstarted'
+  const statusType = effectiveStatusType(fixture, now)
+  const hasStarted = statusType !== 'notstarted'
   const performers = fixture.syncedMatch?.top_performers ?? []
-  const countdown = fixture.status_type === 'notstarted' ? formatCountdown(fixture.timestamp, now) : null
+  const countdown = statusType === 'notstarted' ? formatCountdown(fixture.timestamp, now) : null
+  const statusLabel = displayStatus(fixture, statusType)
 
   return (
     <article
@@ -317,8 +320,8 @@ function MatchCard({ fixture, now, language, onOpen }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${statusClass(fixture.status_type)}`}>
-              {fixture.status}
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${statusClass(statusType)}`}>
+              {statusLabel}
             </span>
             {isTodayMatch(fixture) && (
               <span className="inline-flex rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-sky-700">
@@ -385,7 +388,7 @@ function MatchCard({ fixture, now, language, onOpen }) {
         </div>
       )}
 
-      {fixture.status_type === 'finished' && !performers.length && (
+      {statusType === 'finished' && !performers.length && (
         <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">
           Finished. Admin refresh is available in Data Control once player stats are published.
         </p>
@@ -427,6 +430,23 @@ function statusClass(statusType) {
   return 'bg-emerald-50 text-emerald-700'
 }
 
+function effectiveStatusType(fixture, nowMs = Date.now()) {
+  if (!fixture) return undefined
+  if (fixture.status_type !== 'notstarted') return fixture.status_type
+  if (!fixture.timestamp) return fixture.status_type
+  const elapsedSeconds = Math.floor(nowMs / 1000 - fixture.timestamp)
+  if (elapsedSeconds < 0) return 'notstarted'
+  if (elapsedSeconds > 150 * 60) return 'finished'
+  return 'inprogress'
+}
+
+function displayStatus(fixture, statusType) {
+  if (fixture.status_type !== 'notstarted') return fixture.status
+  if (statusType === 'inprogress') return 'LIVE'
+  if (statusType === 'finished') return 'FINISHED'
+  return fixture.status
+}
+
 function sortMatchesByDate(matches) {
   return [...matches].sort((a, b) => {
     const aToday = isTodayMatch(a)
@@ -439,21 +459,22 @@ function sortMatchesByDate(matches) {
 
     const aTime = matchTime(a)
     const bTime = matchTime(b)
-    if (a.status_type === 'finished' && b.status_type === 'finished') return bTime - aTime
+    if (effectiveStatusType(a) === 'finished' && effectiveStatusType(b) === 'finished') return bTime - aTime
     return aTime - bTime
   })
 }
 
 function statusDateRank(match) {
+  const statusType = effectiveStatusType(match)
   if (isTodayMatch(match)) {
-    if (match.status_type === 'inprogress') return 0
-    if (match.status_type === 'notstarted') return 1
-    if (match.status_type === 'finished') return 2
+    if (statusType === 'inprogress') return 0
+    if (statusType === 'notstarted') return 1
+    if (statusType === 'finished') return 2
     return 3
   }
-  if (match.status_type === 'inprogress') return 4
-  if (match.status_type === 'notstarted') return 5
-  if (match.status_type === 'finished') return 6
+  if (statusType === 'inprogress') return 4
+  if (statusType === 'notstarted') return 5
+  if (statusType === 'finished') return 6
   return 7
 }
 
@@ -485,8 +506,8 @@ function matchTime(match) {
 
 function formatCountdown(timestamp, nowMs = Date.now()) {
   if (!timestamp) return null
-  const totalSeconds = Math.max(0, Math.floor((timestamp * 1000 - nowMs) / 1000))
-  if (totalSeconds <= 0) return { main: 'Kickoff soon', sub: '' }
+  const totalSeconds = Math.floor((timestamp * 1000 - nowMs) / 1000)
+  if (totalSeconds <= 0) return null
 
   const days = Math.floor(totalSeconds / 86400)
   const hours = Math.floor((totalSeconds % 86400) / 3600)

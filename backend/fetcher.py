@@ -98,6 +98,11 @@ STAT_FIELDS = (
     "accurateThroughPasses",
     "totalThroughPasses",
     "throughPasses",
+    "bigChanceCreated",
+    "bigChancesCreated",
+    "bigChanceMissed",
+    "bigChancesMissed",
+    "missedChances",
     "successfulDribbles",
     "successfulDribblesPercentage",
     "possessionLost",
@@ -1281,6 +1286,11 @@ EXACT_STAT_BACKFILL_FIELDS = (
     "accurateThroughPasses",
     "totalThroughPasses",
     "throughPasses",
+    "bigChanceCreated",
+    "bigChancesCreated",
+    "bigChanceMissed",
+    "bigChancesMissed",
+    "missedChances",
     "successfulDribbles",
     "successfulDribblesPercentage",
     "totalDribbles",
@@ -1322,6 +1332,9 @@ def _merge_exact_stat_fields(existing: dict, source: dict) -> tuple[dict, bool]:
     set_if_present("crossAccuracy", "accurateCrossesPercentage", percent_value=True)
     set_if_present("finalThirdPasses", "accurateFinalThirdPasses")
     set_if_present("throughPasses", "throughPasses", "accurateThroughPasses", "totalThroughPasses")
+    set_if_present("bigChancesCreated", "bigChanceCreated", "bigChancesCreated")
+    set_if_present("bigChancesMissed", "bigChanceMissed", "bigChancesMissed")
+    set_if_present("missedChances", "missedChances", "bigChanceMissed", "bigChancesMissed")
     set_if_present("recoveries", "recoveries", "ballRecovery")
     set_if_present("tackles", "tackles", "totalTackle")
     set_if_present("successfulTackles", "successfulTackles", "wonTackle")
@@ -1438,7 +1451,7 @@ def backfill_exact_stat_fields(
                             continue
                         merged_stats, changed = _merge_exact_stat_fields(
                             player.stats or {},
-                            item.get("statistics") or {},
+                            item.get("statistics") or item,
                         )
                         if changed:
                             player.stats = merged_stats
@@ -1524,7 +1537,9 @@ def sync_recent(
 
                     for event in events:
                         status = (event.get("status") or {})
-                        if status.get("type") not in COMPLETED_STATUS_TYPES:
+                        status_type = status.get("type")
+                        is_world_cup_live = league["name"] == "FIFA World Cup" and status_type == "inprogress"
+                        if status_type not in COMPLETED_STATUS_TYPES and not is_world_cup_live:
                             continue
 
                         fixture_id = _safe_int(event.get("id"))
@@ -1765,6 +1780,9 @@ def sync_player_recent_form(
                   "crosses": _safe_int(stats_block.get("totalCross") or stats_block.get("totalCrosses") or stats_block.get("crosses")),
                   "finalThirdPasses": _safe_int(stats_block.get("accurateFinalThirdPasses")),
                   "throughPasses": _safe_int(stats_block.get("throughPasses") or stats_block.get("accurateThroughPasses") or stats_block.get("totalThroughPasses")),
+                  "bigChancesCreated": _safe_int(stats_block.get("bigChanceCreated") or stats_block.get("bigChancesCreated")),
+                  "bigChancesMissed": _safe_int(stats_block.get("bigChanceMissed") or stats_block.get("bigChancesMissed")),
+                  "missedChances": _safe_int(stats_block.get("missedChances") or stats_block.get("bigChanceMissed") or stats_block.get("bigChancesMissed")),
                   "dispossessed": _safe_int(stats_block.get("dispossessed")),
                   "miscontrols": _safe_int(stats_block.get("unsuccessfulTouches") or stats_block.get("unsuccessfulTouch")),
                   "recoveries": _safe_int(stats_block.get("recoveries") or stats_block.get("ballRecovery")),
@@ -1869,7 +1887,15 @@ def _rollup_player_exact_defensive_stats(db: Session, source_player_id: int) -> 
     if not matches:
         return 0
 
-    exact_keys = ("recoveries", "successfulTackles", "fouls")
+    exact_keys = (
+        "recoveries",
+        "successfulTackles",
+        "fouls",
+        "throughPasses",
+        "bigChancesCreated",
+        "bigChancesMissed",
+        "missedChances",
+    )
     floor_keys = ("tackles", "interceptions")
     changed = 0
 
@@ -1966,6 +1992,7 @@ def sync_player_defensive_from_match_lineups(
             for key in (
                 "recoveries", "tackles", "successfulTackles", "fouls", "interceptions",
                 "possessionLost", "touches", "dispossessed", "miscontrols", "rating",
+                "throughPasses", "bigChancesCreated", "bigChancesMissed", "missedChances",
             ):
                 if key in exact_stats:
                     current[key] = exact_stats[key]

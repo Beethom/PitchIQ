@@ -195,7 +195,11 @@ def _row_matches_season_cycle(row, base, allow_calendar_international: bool = Fa
 
 
 def _national_competition_label(source_league_id: Optional[int], fallback: str) -> str:
-    return NATIONAL_COMPETITION_LABELS.get(source_league_id, fallback or "International")
+    if source_league_id in NATIONAL_COMPETITION_LABELS:
+        return NATIONAL_COMPETITION_LABELS[source_league_id]
+    if _normalize_text(fallback) in {"fifa world cup", "world cup"}:
+        return "International Matches"
+    return fallback or "International"
 
 
 def _player_photo_url(row) -> Optional[str]:
@@ -250,6 +254,9 @@ def _build_windowed_international_row(row, base_season: str, matches: list, sour
         "_totalDribbles": 0,
         "xG": 0.0,
         "xA": 0.0,
+        "bigChancesCreated": 0,
+        "bigChancesMissed": 0,
+        "missedChances": 0,
     }
     rating_sum = 0.0
     rating_count = 0
@@ -266,6 +273,9 @@ def _build_windowed_international_row(row, base_season: str, matches: list, sour
         totals["crosses"] += stats.get("crosses", 0) or 0
         totals["finalThirdPasses"] += stats.get("finalThirdPasses", 0) or 0
         totals["throughPasses"] += stats.get("throughPasses", 0) or 0
+        totals["bigChancesCreated"] += stats.get("bigChancesCreated", 0) or 0
+        totals["bigChancesMissed"] += stats.get("bigChancesMissed", 0) or 0
+        totals["missedChances"] += stats.get("missedChances", stats.get("bigChancesMissed", 0)) or 0
         totals["dispossessed"] += stats.get("dispossessed", 0) or 0
         totals["miscontrols"] += stats.get("miscontrols", 0) or 0
         totals["recoveries"] += stats.get("recoveries", 0) or 0
@@ -362,6 +372,10 @@ def _related_competition_rows(db: Session, player: models.Player) -> List[models
     seen_windowed_international: set[tuple[Optional[int], Optional[int], Optional[int], str]] = set()
     for row in rows:
         if _is_cross_year_season(player.season) and _is_international_row(row) and row.season != player.season:
+            if _has_detailed_player_stats(row):
+                if _row_matches_season_cycle(row, player, allow_calendar_international=True):
+                    related.append(row)
+                continue
             windowed = _windowed_international_rows(db, row, player.season)
             if windowed:
                 for windowed_row in windowed:
@@ -404,6 +418,9 @@ def _replace_windowed_international_rows(db: Session, rows: list, base_season: s
     seen_windowed: set[tuple[Optional[int], Optional[int], Optional[int], str]] = set()
     for row in rows:
         if _is_international_row(row) and row.season != base_season:
+            if _has_detailed_player_stats(row):
+                replaced.append(row)
+                continue
             windowed = _windowed_international_rows(db, row, base_season)
             if windowed:
                 for windowed_row in windowed:
@@ -420,6 +437,24 @@ def _replace_windowed_international_rows(db: Session, rows: list, base_season: s
                 continue
         replaced.append(row)
     return replaced
+
+
+def _has_detailed_player_stats(row) -> bool:
+    stats = getattr(row, "stats", {}) or {}
+    detailed_keys = (
+        "shots",
+        "shotsOnTarget",
+        "keyPasses",
+        "totalPasses",
+        "touches",
+        "dribbles",
+        "recoveries",
+        "tackles",
+        "interceptions",
+        "xG",
+        "xA",
+    )
+    return any((stats.get(key) or 0) for key in detailed_keys)
 
 
 def _season_sort_key(season: str) -> tuple[int, int]:
@@ -483,9 +518,9 @@ def _candidate_row_score(row: models.Player) -> tuple:
     stats = getattr(row, "stats", {}) or {}
     return (
         0 if _is_national_team_row(row) else 1,
+        _season_sort_key(getattr(row, "season", "")),
         stats.get("appearances", 0) or 0,
         stats.get("minutesPlayed", 0) or 0,
-        _season_sort_key(getattr(row, "season", "")),
         getattr(row, "last_synced_at", "") or "",
         -getattr(row, "id", 0),
     )
@@ -539,6 +574,25 @@ def _canonical_cycle_id(rows: List[models.Player]) -> int:
     return min(row.id for row in rows)
 
 
+def _profile_rows_for_player(db: Session, player: models.Player) -> tuple[models.Player, list]:
+    if not player.source_player_id:
+        return player, [player]
+
+    rows = (
+        db.query(models.Player)
+        .filter(models.Player.source_player_id == player.source_player_id)
+        .all()
+    )
+    if not rows:
+        return player, [player]
+
+    best_base = max(rows, key=_candidate_row_score)
+    cycle_rows = _related_rows_for_cycle(rows, best_base)
+    cycle_rows = _replace_windowed_international_rows(db, cycle_rows, best_base.season)
+    base_row = max(cycle_rows, key=_candidate_row_score)
+    return base_row, cycle_rows or [best_base]
+
+
 def _build_aggregate_ns(
     base: models.Player, rows: List[models.Player], canonical_id: Optional[int] = None
 ) -> types.SimpleNamespace:
@@ -553,6 +607,7 @@ def _build_aggregate_ns(
         "touches", "accurateCrosses", "crosses", "finalThirdPasses", "throughPasses",
         "possessionLost", "dispossessed", "miscontrols", "recoveries", "successfulTackles",
         "fouls", "_accuratePasses", "_totalDribbles",
+        "bigChancesCreated", "bigChancesMissed", "missedChances",
     )
     totals: dict = {k: 0 for k in sum_keys}
     totals["xG"] = 0.0
@@ -720,6 +775,80 @@ def _competition_stats(row: models.Player) -> dict:
     return {**s, "goalContributions": goals + assists}
 
 
+def _competition_row_sort_key(row, base) -> tuple:
+    season_key = _season_sort_key(getattr(row, "season", ""))
+    reverse_season = tuple(-part for part in season_key)
+    return (
+        1 if _is_international_row(row) else 0,
+        0 if getattr(row, "source_team_id", None) == getattr(base, "source_team_id", None) else 1,
+        reverse_season,
+        (getattr(row, "league", "") or "").casefold(),
+    )
+
+
+def _player_match_log(db: Session, player, rows: List[models.Player], limit: int = 30) -> list[dict]:
+    if not getattr(player, "source_player_id", None):
+        return []
+
+    league_names = {
+        row.source_league_id: _national_competition_label(row.source_league_id, row.league)
+        for row in rows
+        if getattr(row, "source_league_id", None) is not None
+    }
+    allowed_pairs = {
+        (row.source_league_id, row.source_season)
+        for row in rows
+        if getattr(row, "source_league_id", None) is not None
+    }
+
+    matches = (
+        db.query(models.PlayerMatchStat)
+        .filter(models.PlayerMatchStat.source_player_id == player.source_player_id)
+        .order_by(models.PlayerMatchStat.fixture_date.desc())
+        .limit(max(1, min(limit, 80)))
+        .all()
+    )
+
+    log_rows = []
+    for match in matches:
+        if allowed_pairs and (match.source_league_id, match.source_season) not in allowed_pairs:
+            continue
+        stats = dict(match.stats or {})
+        rating = match.rating
+        if rating is not None and not stats.get("rating"):
+            try:
+                stats["rating"] = round(float(rating), 1)
+            except (TypeError, ValueError):
+                stats["rating"] = rating
+        has_complete_detail = _has_complete_match_log_detail(stats)
+        if not has_complete_detail:
+            continue
+        log_rows.append({
+            "fixture_id": match.fixture_id,
+            "date": (match.fixture_date or "")[:10],
+            "opponent": match.opponent,
+            "competition": league_names.get(match.source_league_id) or _national_competition_label(match.source_league_id, ""),
+            "has_detailed_stats": has_complete_detail,
+            "rating": rating,
+            "stats": stats,
+        })
+    return log_rows[:limit]
+
+
+def _has_complete_match_log_detail(stats: dict) -> bool:
+    required_keys = (
+        "minutesPlayed",
+        "rating",
+        "xG",
+        "xA",
+        "bigChancesCreated",
+        "touches",
+        "totalPasses",
+        "tackles",
+    )
+    return all((stats or {}).get(key) not in (None, "") for key in required_keys)
+
+
 def _deduplicate_players(db: Session, rows: List[models.Player]) -> list:
     """
     Return one entry per real player.
@@ -765,8 +894,8 @@ def get_player_profile(db: Session, player_id: int):
     if not player:
         return None
 
-    rows = _related_competition_rows(db, player)
-    aggregate = _build_aggregate_ns(player, rows, canonical_id=_canonical_cycle_id(rows))
+    base_row, rows = _profile_rows_for_player(db, player)
+    aggregate = _build_aggregate_ns(base_row, rows, canonical_id=_canonical_cycle_id(rows))
     aggregate.form = _best_available_form(db, aggregate, rows)
 
     competitions = [
@@ -777,8 +906,9 @@ def get_player_profile(db: Session, player_id: int):
             "season":      row.season,
             "stats":       _competition_stats(row),
         }
-        for row in sorted(rows, key=lambda r: (r.season, r.league))
+        for row in sorted(rows, key=lambda r: _competition_row_sort_key(r, base_row))
     ]
+    aggregate.match_log = _player_match_log(db, base_row, rows)
     return aggregate, competitions
 
 
@@ -1113,11 +1243,11 @@ def _fixture_from_synced_match(match: dict) -> Optional[dict]:
     }
 
 
-def _world_cup_fixture_stats(fixture_id: int) -> list[dict]:
+def _world_cup_fixture_stats(fixture_id: int, force: bool = False) -> list[dict]:
     from fetcher import _get
 
     cache_key = f"world_cup_stats:{fixture_id}"
-    cached = _cache_get(cache_key, 60)
+    cached = None if force else _cache_get(cache_key, 60)
     if cached is not None:
         return cached
 
@@ -1146,10 +1276,10 @@ def _world_cup_fixture_stats(fixture_id: int) -> list[dict]:
     return _cache_set(cache_key, rows)
 
 
-def _world_cup_incidents(fixture_id: int) -> list:
+def _world_cup_incidents(fixture_id: int, force: bool = False) -> list:
     from fetcher import _get
     cache_key = f"world_cup_incidents:{fixture_id}"
-    cached = _cache_get(cache_key, 20)
+    cached = None if force else _cache_get(cache_key, 20)
     if cached is not None:
         return cached
 
@@ -1178,6 +1308,7 @@ def _world_cup_incidents(fixture_id: int) -> list:
                 "player": player.get("name", ""),
                 "player_id": player.get("id"),
                 "assist": (inc.get("assist1") or {}).get("name", ""),
+                "assist_id": (inc.get("assist1") or {}).get("id"),
                 "is_home": is_home,
                 "description": inc.get("description", ""),
             })
@@ -1198,12 +1329,23 @@ def _world_cup_incidents(fixture_id: int) -> list:
                 "minute": time_val,
                 "added_time": added_time,
                 "player_out": player.get("name", ""),
+                "player_out_id": player.get("id"),
                 "player_in": player2.get("name", ""),
+                "player_in_id": player2.get("id"),
                 "is_home": is_home,
             })
         elif inc_type in ("varDecision", "var"):
             incidents.append({
                 "type": "var",
+                "subtype": inc_class,
+                "minute": time_val,
+                "added_time": added_time,
+                "description": inc.get("description", ""),
+                "is_home": is_home,
+            })
+        elif inc_type in ("corner", "cornerKick"):
+            incidents.append({
+                "type": "corner",
                 "subtype": inc_class,
                 "minute": time_val,
                 "added_time": added_time,
@@ -1266,6 +1408,7 @@ def _world_cup_lineups(db: Session, fixture_id: int) -> Optional[dict]:
             "position": entry.get("position") or player_info.get("position") or "",
             "shirt_number": entry.get("shirtNumber") or entry.get("jerseyNumber") or player_info.get("jerseyNumber"),
             "substitute": bool(entry.get("substitute")),
+            "captain": bool(entry.get("captain")),
             "rating": stats.get("rating"),
             "goals": stats.get("goals") or stats.get("goal") or 0,
             "assists": stats.get("assists") or stats.get("goalAssist") or 0,
@@ -1290,11 +1433,314 @@ def _world_cup_lineups(db: Session, fixture_id: int) -> Optional[dict]:
     }
 
 
-def get_world_cup_match_detail(db: Session, fixture_id: int) -> Optional[dict]:
+def _fixture_stats_payload(player, fixture_id: int, match) -> dict:
+    stats = dict(match.stats or {})
+    rating = match.rating
+    if rating is not None and not stats.get("rating"):
+        try:
+            stats["rating"] = round(float(rating), 1)
+        except (TypeError, ValueError):
+            stats["rating"] = rating
+
+    return {
+        "player_id": player.id,
+        "source_player_id": player.source_player_id,
+        "fixture_id": fixture_id,
+        "fixture_date": match.fixture_date,
+        "opponent": match.opponent,
+        "competition": _national_competition_label(match.source_league_id, player.league),
+        "rating": rating,
+        "stats": stats,
+    }
+
+
+def _has_fixture_detail(stats: dict) -> bool:
+    keys = (
+        "minutesPlayed",
+        "goals",
+        "assists",
+        "shots",
+        "shotsOnTarget",
+        "keyPasses",
+        "totalPasses",
+        "touches",
+        "dribbles",
+        "recoveries",
+        "tackles",
+        "interceptions",
+        "xG",
+        "xA",
+        "saves",
+        "goalsConceded",
+        "totalShotsFaced",
+        "rating",
+    )
+    return any((stats or {}).get(key) not in (None, "", 0, 0.0) for key in keys)
+
+
+def _live_world_cup_fixture_stats(db: Session, player, fixture_id: int) -> Optional[dict]:
+    from fetcher import _get, _lineup_stats_from_block, _position, _score_value
+
+    lineups_cache_key = f"world_cup_lineups_raw:{fixture_id}"
+    data = _cache_get(lineups_cache_key, 10 * 60)
+    if data is None:
+        data = _cache_set(lineups_cache_key, _get(f"/api/v1/event/{fixture_id}/lineups"))
+
+    event = {}
+    event_cache_key = f"world_cup_event:{fixture_id}"
+    event_data = _cache_get(event_cache_key, 60)
+    if event_data is None:
+        try:
+            event_data = _cache_set(event_cache_key, _get(f"/api/v1/event/{fixture_id}"))
+        except Exception:
+            event_data = {}
+    if isinstance(event_data, dict):
+        event = event_data.get("event") or event_data
+
+    home_score = _score_value(event.get("homeScore"))
+    away_score = _score_value(event.get("awayScore"))
+    fixture_date = ""
+    timestamp = event.get("startTimestamp")
+    if timestamp:
+        fixture_date = datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+
+    for side_key in ("home", "away"):
+        side = data.get(side_key) or {}
+        opponent_key = "away" if side_key == "home" else "home"
+        opponent = ((event.get(f"{opponent_key}Team") or {}).get("name"))
+        goals_conceded = away_score if side_key == "home" else home_score
+        for entry in side.get("players", []) or []:
+            player_info = entry.get("player") or {}
+            if str(player_info.get("id")) != str(player.source_player_id):
+                continue
+
+            stats_block = entry.get("statistics") or {}
+            position = _position(entry.get("position") or player_info.get("position"))
+            stats = _lineup_stats_from_block(
+                stats_block,
+                substitute=bool(entry.get("substitute")),
+                position=position,
+                goals_conceded=goals_conceded if position == "GK" else None,
+            )
+            return {
+                "player_id": player.id,
+                "source_player_id": player.source_player_id,
+                "fixture_id": fixture_id,
+                "fixture_date": fixture_date,
+                "opponent": opponent,
+                "competition": "FIFA World Cup",
+                "rating": stats.get("rating"),
+                "stats": stats,
+            }
+
+    return None
+
+
+def _fixture_positional_data(source_player_id: int, fixture_id: int) -> dict:
+    """Real per-match positional data from the provider: the player's heatmap
+    points and their shots (with pitch coordinates, type and minute)."""
+    from fetcher import _get
+
+    cache_key = f"fixture_positional:{fixture_id}:{source_player_id}"
+    cached = _cache_get(cache_key, 10 * 60)
+    if cached is not None:
+        return cached
+
+    heatmap: list[dict] = []
+    shots: list[dict] = []
+    try:
+        hm = _get(f"/api/v1/event/{fixture_id}/player/{source_player_id}/heatmap")
+        heatmap = [
+            {"x": p.get("x"), "y": p.get("y")}
+            for p in (hm.get("heatmap") or [])
+            if p.get("x") is not None and p.get("y") is not None
+        ]
+    except Exception:
+        heatmap = []
+
+    try:
+        sm = _get(f"/api/v1/event/{fixture_id}/shotmap")
+        for shot in (sm.get("shotmap") or []):
+            if (shot.get("player") or {}).get("id") != source_player_id:
+                continue
+            coords = shot.get("playerCoordinates") or {}
+            mouth = shot.get("goalMouthCoordinates") or {}
+            shots.append({
+                "x": coords.get("x"),
+                "y": coords.get("y"),
+                "type": shot.get("shotType"),       # goal | save | miss | block | post
+                "xg": shot.get("xg"),
+                "xgot": shot.get("xgot"),
+                "minute": shot.get("time"),
+                "body_part": shot.get("bodyPart"),
+                "situation": shot.get("situation"),
+                # Where the shot crossed the goal line (y = across goal, z = height).
+                "goal_mouth": {"y": mouth.get("y"), "z": mouth.get("z")} if mouth else None,
+            })
+    except Exception:
+        shots = []
+
+    # Full-match incidents (goals & cards, both teams) for match context.
+    incidents = []
+    motm_rating = 0.0
+    try:
+        inc = _get(f"/api/v1/event/{fixture_id}/incidents")
+        for item in (inc.get("incidents") or []):
+            itype = item.get("incidentType")
+            if itype not in ("goal", "card", "substitution"):
+                continue
+            incidents.append({
+                "minute": item.get("time"),
+                "added_time": item.get("addedTime"),
+                "type": itype,
+                "subtype": item.get("incidentClass"),
+                "is_home": bool(item.get("isHome", True)),
+                "player": (item.get("player") or {}).get("id"),
+                "assist": (item.get("assist1") or {}).get("id") if itype == "goal" else None,
+                "player_in": (item.get("playerIn") or {}).get("id") if itype == "substitution" else None,
+                "player_out": (item.get("playerOut") or {}).get("id") if itype == "substitution" else None,
+            })
+    except Exception:
+        incidents = []
+
+    try:
+        ln = _get(f"/api/v1/event/{fixture_id}/lineups")
+        for side in ("home", "away"):
+            for p in ((ln.get(side) or {}).get("players") or []):
+                r = ((p.get("statistics") or {}).get("rating"))
+                if r is not None:
+                    motm_rating = max(motm_rating, float(r))
+    except Exception:
+        motm_rating = 0.0
+
+    # Richer per-player stats not stored in our rollup (duels, long balls, blocks…).
+    extra = {}
+    try:
+        st = (_get(f"/api/v1/event/{fixture_id}/player/{source_player_id}/statistics") or {}).get("statistics") or {}
+        duel_won = st.get("duelWon")
+        duel_lost = st.get("duelLost")
+        aerial_won = st.get("aerialWon")
+        if st.get("keyPass") is not None:
+            extra["keyPasses"] = st.get("keyPass")
+        if st.get("accuratePass") is not None:
+            extra["_accuratePasses"] = st.get("accuratePass")
+            extra["totalPasses"] = st.get("totalPass")
+            if st.get("totalPass"):
+                extra["passAccuracy"] = round((st.get("accuratePass") / st.get("totalPass")) * 100, 1)
+        if st.get("accurateLongBalls") is not None:
+            extra["accurateLongBalls"] = st.get("accurateLongBalls")
+            extra["longBalls"] = st.get("totalLongBalls")
+        if st.get("blockedScoringAttempt") is not None:
+            extra["blocks"] = st.get("blockedScoringAttempt")
+        if st.get("expectedAssists") is not None:
+            extra["xA"] = st.get("expectedAssists")
+        if st.get("keyPass") is not None:
+            extra["chancesCreated"] = st.get("keyPass")
+        if st.get("bigChanceCreated") is not None:
+            extra["bigChancesCreated"] = st.get("bigChanceCreated")
+        if st.get("bigChanceMissed") is not None:
+            extra["bigChancesMissed"] = st.get("bigChanceMissed")
+        if st.get("wasFouled") is not None:
+            extra["foulsSuffered"] = st.get("wasFouled")
+        if st.get("ballCarriesCount") is not None:
+            extra["carries"] = st.get("ballCarriesCount")
+        if st.get("progressiveBallCarriesCount") is not None:
+            extra["progressiveCarries"] = st.get("progressiveBallCarriesCount")
+        if aerial_won is not None:
+            extra["aerialDuelsWon"] = aerial_won
+        if duel_won is not None and duel_lost is not None:
+            extra["duelsWon"] = duel_won
+            extra["duelsTotal"] = duel_won + duel_lost
+            extra["groundDuelsWon"] = max(0, duel_won - (aerial_won or 0))
+            total = duel_won + duel_lost
+            extra["duelSuccess"] = round((duel_won / total) * 100) if total else None
+    except Exception:
+        extra = {}
+
+    # Event meta for the header: scoreline, venue, opponent crest.
+    event_meta = {}
+    try:
+        ev = (_get(f"/api/v1/event/{fixture_id}") or {}).get("event") or {}
+        home = ev.get("homeTeam") or {}
+        away = ev.get("awayTeam") or {}
+        event_meta = {
+            "home_name": home.get("name"),
+            "away_name": away.get("name"),
+            "home_crest": f"/api/media/team/{home.get('id')}/image" if home.get("id") else None,
+            "away_crest": f"/api/media/team/{away.get('id')}/image" if away.get("id") else None,
+            "home_score": (ev.get("homeScore") or {}).get("current"),
+            "away_score": (ev.get("awayScore") or {}).get("current"),
+            "venue": ((ev.get("venue") or {}).get("stadium") or {}).get("name"),
+        }
+    except Exception:
+        event_meta = {}
+
+    return _cache_set(cache_key, {
+        "heatmap": heatmap,
+        "shots": shots,
+        "incidents": incidents,
+        "motm_rating": motm_rating,
+        "extra_stats": extra,
+        "event_meta": event_meta,
+    })
+
+
+def get_player_fixture_stats(db: Session, player_id: int, fixture_id: int) -> Optional[dict]:
+    player = get_player(db, player_id)
+    if not player or not player.source_player_id:
+        return None
+
+    match = (
+        db.query(models.PlayerMatchStat)
+        .filter(
+            models.PlayerMatchStat.fixture_id == fixture_id,
+            models.PlayerMatchStat.source_player_id == player.source_player_id,
+        )
+        .first()
+    )
+
+    def _with_positional(payload):
+        if not payload:
+            return payload
+        positional = _fixture_positional_data(player.source_player_id, fixture_id)
+        payload.setdefault("heatmap", positional.get("heatmap", []))
+        payload.setdefault("shots", positional.get("shots", []))
+        payload.setdefault("match_incidents", positional.get("incidents", []))
+        payload["event_meta"] = positional.get("event_meta", {})
+        # Fill in richer stats we don't store, without overwriting good values.
+        merged = dict(payload.get("stats") or {})
+        for k, v in (positional.get("extra_stats") or {}).items():
+            if v is not None and not merged.get(k):
+                merged[k] = v
+        payload["stats"] = merged
+        rating = payload.get("rating") or (payload.get("stats") or {}).get("rating")
+        motm = positional.get("motm_rating") or 0
+        try:
+            payload["is_motm"] = bool(rating) and float(rating) >= motm > 0
+        except (TypeError, ValueError):
+            payload["is_motm"] = False
+        return payload
+
+    if match and _has_fixture_detail(match.stats or {}):
+        return _with_positional(_fixture_stats_payload(player, fixture_id, match))
+
+    try:
+        live_stats = _live_world_cup_fixture_stats(db, player, fixture_id)
+    except Exception:
+        live_stats = None
+    if live_stats:
+        return _with_positional(live_stats)
+
+    if match:
+        return _with_positional(_fixture_stats_payload(player, fixture_id, match))
+    return None
+
+
+def get_world_cup_match_detail(db: Session, fixture_id: int, force: bool = False) -> Optional[dict]:
     from fetcher import _get
 
     detail_cache_key = f"world_cup_match_detail:{fixture_id}"
-    cached_item = _WORLD_CUP_PROVIDER_CACHE.get(detail_cache_key)
+    cached_item = None if force else _WORLD_CUP_PROVIDER_CACHE.get(detail_cache_key)
     if cached_item:
         created_at, cached_detail = cached_item
         cached_status = ((cached_detail or {}).get("fixture") or {}).get("status_type")
@@ -1310,7 +1756,7 @@ def get_world_cup_match_detail(db: Session, fixture_id: int) -> Optional[dict]:
     fixture = None
     try:
         event_cache_key = f"world_cup_event:{fixture_id}"
-        event_data = _cache_get(event_cache_key, 60)
+        event_data = None if force else _cache_get(event_cache_key, 60)
         if event_data is None:
             event_data = _cache_set(event_cache_key, _get(f"/api/v1/event/{fixture_id}"))
         event = event_data.get("event") or event_data
@@ -1332,7 +1778,7 @@ def get_world_cup_match_detail(db: Session, fixture_id: int) -> Optional[dict]:
 
     stats = []
     try:
-        stats = _world_cup_fixture_stats(fixture_id)
+        stats = _world_cup_fixture_stats(fixture_id, force=force and fixture.get("status_type") == "inprogress")
     except Exception:
         stats = []
 
@@ -1345,9 +1791,39 @@ def get_world_cup_match_detail(db: Session, fixture_id: int) -> Optional[dict]:
     incidents = []
     try:
         if fixture.get("status_type") in ("inprogress", "finished"):
-            incidents = _world_cup_incidents(fixture_id)
+            incidents = _world_cup_incidents(fixture_id, force=force and fixture.get("status_type") == "inprogress")
     except Exception:
         incidents = []
+
+    shotmap = []
+    try:
+        if fixture.get("status_type") in ("inprogress", "finished"):
+            sm = _get(f"/api/v1/event/{fixture_id}/shotmap")
+            for shot in (sm.get("shotmap") or []):
+                coords = shot.get("playerCoordinates") or {}
+                shotmap.append({
+                    "x": coords.get("x"),
+                    "y": coords.get("y"),
+                    "is_home": bool(shot.get("isHome", True)),
+                    "type": shot.get("shotType"),
+                    "xg": shot.get("xg"),
+                    "minute": shot.get("time"),
+                    "player": (shot.get("player") or {}).get("name"),
+                })
+    except Exception:
+        shotmap = []
+
+    momentum = []
+    try:
+        if fixture.get("status_type") in ("inprogress", "finished"):
+            g = _get(f"/api/v1/event/{fixture_id}/graph")
+            momentum = [
+                {"minute": p.get("minute"), "value": p.get("value")}
+                for p in (g.get("graphPoints") or [])
+                if p.get("minute") is not None and p.get("value") is not None
+            ]
+    except Exception:
+        momentum = []
 
     return _cache_set(detail_cache_key, {
         "fixture": fixture,
@@ -1355,6 +1831,8 @@ def get_world_cup_match_detail(db: Session, fixture_id: int) -> Optional[dict]:
         "stats": stats,
         "lineups": lineups,
         "incidents": incidents,
+        "shotmap": shotmap,
+        "momentum": momentum,
     })
 
 

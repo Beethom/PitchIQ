@@ -30,7 +30,7 @@ export default function Footer() {
   const text = (value) => (language === 'fr' ? FR_TRANSLATIONS[value] || value : value)
 
   return (
-    <footer className="border-t border-slate-200 bg-white/90">
+    <footer className="hidden border-t border-slate-200 bg-white/90 xl:block">
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 md:grid-cols-[1.2fr_1fr_1fr_1fr] lg:px-8">
         <div>
           <Link to="/" className="inline-flex items-center gap-2">

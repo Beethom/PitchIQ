@@ -5,6 +5,7 @@ from typing import List, Optional
 import crud
 import schemas
 from database import get_db
+from auto_sync import maybe_sync_world_cup, maybe_sync_incremental
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
@@ -15,4 +16,9 @@ def list_teams(
     season: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
+    # Keep data fresh on view (throttled + non-blocking).
+    if league == "FIFA World Cup":
+        maybe_sync_world_cup()
+    else:
+        maybe_sync_incremental()
     return crud.get_teams(db, league=league, season=season)

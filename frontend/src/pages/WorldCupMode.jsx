@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
-  ArrowRight,
+  ArrowRight, RefreshCw,
   CalendarDays, ListOrdered, ShieldCheck, Swords, Trophy,
 } from 'lucide-react'
 import PageContainer from '../components/layout/PageContainer'
@@ -12,6 +12,8 @@ import CountryFlag from '../components/common/CountryFlag'
 import PlayerAvatar from '../components/player/PlayerAvatar'
 import PlayerSearch from '../components/player/PlayerSearch'
 import { usePlayers } from '../hooks/usePlayers'
+import { adminService } from '../services/adminService'
+import { playerService } from '../services/playerService'
 
 const OFFICIAL_FILTERS = {
   league: 'FIFA World Cup',
@@ -93,7 +95,7 @@ const LEADERBOARD_CATEGORIES = [
       { key: 'tackles',          label: 'Tackles',             fn: (p) => p.stats?.tackles ?? 0,                    fmt: (v) => `${v}` },
       { key: 'successfulTackles',label: 'Successful Tackles',  fn: (p) => p.stats?.successfulTackles ?? 0,          fmt: (v) => `${v}` },
       { key: 'interceptions',    label: 'Interceptions',       fn: (p) => p.stats?.interceptions ?? 0,              fmt: (v) => `${v}` },
-      { key: 'recoveries',       label: 'Recoveries',          fn: (p) => p.stats?.recoveries ?? 0,                 fmt: (v) => `${v}` },
+      { key: 'recoveries',       label: 'Recoveries',          excludeGk: true, fn: (p) => p.stats?.recoveries ?? 0, fmt: (v) => `${v}` },
       { key: 'clearances',       label: 'Clearances',          fn: (p) => p.stats?.clearances ?? 0,                 fmt: (v) => `${v}` },
       { key: 'aerialDuelsWon',   label: 'Aerial Duels Won',    fn: (p) => p.stats?.aerialDuelsWon ?? 0,             fmt: (v) => `${v}` },
       { key: 'fouls',            label: 'Fouls',               fn: (p) => p.stats?.fouls ?? 0,                      fmt: (v) => `${v}` },
@@ -121,7 +123,11 @@ export default function WorldCupMode() {
   const [maxAge, setMaxAge]         = useState(99)
   const [lbCategory, setLbCategory] = useState('output')
   const [lbTab, setLbTab]           = useState('goals')
-  const { players, loading, error, refetch } = usePlayers(OFFICIAL_FILTERS)
+  const [hasLiveMatch, setHasLiveMatch] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
+  const { players, loading, error, updatedAt, refetch } = usePlayers(OFFICIAL_FILTERS)
+  const lastUpdated = updatedAt
 
   const posFilteredPlayers = useMemo(() => {
     const positions = POS_GROUPS[posFilter]
@@ -149,6 +155,86 @@ export default function WorldCupMode() {
   const lbPlayers = useMemo(() => rankByTab(lbSourcePlayers, lbTab, leaderboardTabs), [lbSourcePlayers, lbTab, leaderboardTabs])
   const inForm    = useMemo(() => rankInForm(posFilteredPlayers), [posFilteredPlayers])
   const goalkeeperLeaders = useMemo(() => rankGoalkeepers(goalkeepers), [goalkeepers])
+
+  // Track whether any World Cup match is currently live, so we can poll
+  // aggressively during games and back off when nothing is happening.
+  useEffect(() => {
+    let cancelled = false
+    const checkLive = async () => {
+      try {
+        const matches = await playerService.getWorldCupMatches(20)
+        if (cancelled) return
+        const live = (matches ?? []).some((m) =>
+          ['inprogress', 'live'].includes(String(m.status_type || '').toLowerCase()),
+        )
+        setHasLiveMatch(live)
+      } catch {
+        /* ignore — fall back to slow polling */
+      }
+    }
+    checkLive()
+    const timer = setInterval(checkLive, 60000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [])
+
+  // Auto-refresh the leaderboards. Quiet refetches update data in place
+  // (no loader flash), the cadence ramps up while a match is live, and we
+  // pause while the tab is hidden — refreshing immediately when it returns.
+  useEffect(() => {
+    const intervalMs = hasLiveMatch ? 20000 : 90000
+    let timer = null
+
+    const start = () => {
+      if (timer) return
+      timer = setInterval(() => {
+        if (document.visibilityState === 'visible') refetch({ force: true, quiet: true })
+      }, intervalMs)
+    }
+    const stop = () => { if (timer) { clearInterval(timer); timer = null } }
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refetch({ force: true, quiet: true })
+        start()
+      } else {
+        stop()
+      }
+    }
+
+    if (document.visibilityState === 'visible') start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility) }
+  }, [refetch, hasLiveMatch])
+
+  async function syncWorldCupStats() {
+    try {
+      setSyncing(true)
+      setSyncMessage('')
+      const result = await adminService.startIncrementalSync({
+        competitions: ['FIFA World Cup'],
+        dry_run: false,
+      })
+      setSyncMessage(result.message || 'Updating World Cup stats...')
+
+      for (let attempt = 0; attempt < 24; attempt += 1) {
+        await delay(5000)
+        const status = await adminService.getSyncStatus()
+        if (status.status === 'running') {
+          setSyncMessage('Updating World Cup stats...')
+          continue
+        }
+        setSyncMessage(`Stats updated. Players changed: ${status.players ?? 0}.`)
+        await refetch({ force: true })
+        return
+      }
+
+      setSyncMessage('Still updating. The leaderboard will refresh automatically.')
+    } catch (err) {
+      setSyncMessage(err.message || 'Could not start World Cup sync.')
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div className="flex-1 min-w-0 bg-slate-50">
@@ -182,8 +268,22 @@ export default function WorldCupMode() {
               >
                 Full Board <ArrowRight size={15} />
               </Link>
+              <button
+                type="button"
+                onClick={syncWorldCupStats}
+                disabled={syncing}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-950 bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+                Update Stats
+              </button>
             </div>
           </div>
+          {syncMessage && (
+            <p className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+              {syncMessage}
+            </p>
+          )}
           <div className="mt-5 max-w-2xl">
             <PlayerSearch
               onSelect={(player) => player?.id && navigate(`/player/${player.id}`)}
@@ -201,6 +301,7 @@ export default function WorldCupMode() {
           <StatusStrip
             rows={players.length}
             summary={data.summary}
+            lastUpdated={lastUpdated}
           />
 
           {loading && <Loader />}
@@ -306,6 +407,10 @@ export default function WorldCupMode() {
   )
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 /* ─────────────────────────────────────────── components ── */
 
 function WorldCupCategoryNav({ active }) {
@@ -374,7 +479,11 @@ function PosFilterTabs({ value, onChange }) {
   )
 }
 
-function StatusStrip({ rows, summary }) {
+function StatusStrip({ rows, summary, lastUpdated }) {
+  const updatedLabel = lastUpdated
+    ? new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(lastUpdated)
+    : 'not refreshed yet'
+
   return (
     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <StatusTile label="Player Rows" value={rows} sub="synced" />
@@ -385,7 +494,7 @@ function StatusStrip({ rows, summary }) {
         <p className="mt-2 text-3xl font-black text-slate-950">
           {summary.avgRating ? summary.avgRating.toFixed(2) : '—'}
         </p>
-        <p className="mt-1 text-xs text-slate-400">across all players</p>
+        <p className="mt-1 text-xs text-slate-400">updated {updatedLabel}</p>
       </div>
     </section>
   )
@@ -669,6 +778,7 @@ function rankByTab(players, tabKey, tabs = []) {
   const minMins = tab.minMins ?? 0
   return [...players]
     .filter((p) => !tab.keeperOnly || p.position === 'GK')
+    .filter((p) => !tab.excludeGk || p.position !== 'GK')
     .filter((p) => (p.stats?.minutesPlayed ?? 0) >= minMins)
     .filter((p) => tab.lowerIsBetter || tab.fn(p) > 0)
     .sort((a, b) => {

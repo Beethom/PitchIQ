@@ -8,6 +8,7 @@ from typing import List, Optional
 import crud
 import schemas
 from database import get_db
+from auto_sync import maybe_sync_world_cup, maybe_sync_incremental
 
 router = APIRouter(prefix="/players", tags=["players"])
 log = logging.getLogger(__name__)
@@ -20,6 +21,11 @@ def search_players(
     limit: int = Query(20, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
+    # Searching is a strong signal someone's about to look at players — keep
+    # data fresh (throttled + non-blocking). World Cup refreshes often; the
+    # general incremental refresh covers every other competition.
+    maybe_sync_world_cup()
+    maybe_sync_incremental()
     return crud.search_players(db, q, limit=limit)
 
 
@@ -40,6 +46,13 @@ def list_players(
     offset:   int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
+    # Keep data fresh on its own: World Cup pages refresh often, every other
+    # section (Dashboard, Scouting Board, Compare, …) gets the slower general
+    # refresh. Both are throttled and non-blocking.
+    if league == "FIFA World Cup" or group == "world_cup_2026":
+        maybe_sync_world_cup()
+    else:
+        maybe_sync_incremental()
     return crud.get_players(
         db,
         league=league,
@@ -63,7 +76,12 @@ def world_cup_matches(
     limit: int = Query(12, ge=1, le=40),
     db: Session = Depends(get_db),
 ):
-    return crud.get_world_cup_match_center(db, limit=limit)
+    matches = crud.get_world_cup_match_center(db, limit=limit)
+    live = any(
+        str((m or {}).get("status_type", "")).lower() == "inprogress" for m in matches
+    )
+    maybe_sync_world_cup(live=live)
+    return matches
 
 
 @router.get("/world-cup/fixtures", response_model=List[schemas.WorldCupFixture])
@@ -76,11 +94,14 @@ def world_cup_fixtures(
 @router.get("/world-cup/matches/{fixture_id}", response_model=schemas.WorldCupMatchDetail)
 def world_cup_match_detail(
     fixture_id: int,
+    force: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    result = crud.get_world_cup_match_detail(db, fixture_id)
+    result = crud.get_world_cup_match_detail(db, fixture_id, force=force)
     if not result:
         raise HTTPException(status_code=404, detail="World Cup match not found")
+    live = str(((result.get("fixture") or {}).get("status_type")) or "").lower() == "inprogress"
+    maybe_sync_world_cup(live=live)
     return result
 
 
@@ -128,6 +149,18 @@ def sync_player_defensive(
     return result
 
 
+@router.get("/{player_id}/matches/{fixture_id}", response_model=schemas.PlayerFixtureStats)
+def get_player_fixture_stats(
+    player_id: int,
+    fixture_id: int,
+    db: Session = Depends(get_db),
+):
+    result = crud.get_player_fixture_stats(db, player_id, fixture_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Match stats not found for this player")
+    return result
+
+
 @router.get("/{player_id}", response_model=schemas.PlayerProfileOut)
 def get_player(player_id: int, db: Session = Depends(get_db)):
     if os.getenv("RAPIDAPI_KEY") and crud.needs_national_match_sync(db, player_id):
@@ -144,8 +177,17 @@ def get_player(player_id: int, db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="Player not found")
     aggregate, competitions = result
+    # Keep this player's data fresh on view (throttled + non-blocking).
+    # World Cup players refresh often; everyone else gets the general refresh.
+    # sync_pending tells the client to re-fetch shortly so this view picks up
+    # the freshly synced numbers.
+    if any((c.get("competition") == "FIFA World Cup") for c in competitions):
+        sync_pending = maybe_sync_world_cup()
+    else:
+        sync_pending = maybe_sync_incremental()
     # aggregate.league is already "All Competitions" from _build_aggregate_ns
     payload = schemas.PlayerProfileOut.model_validate(aggregate, from_attributes=True).model_dump()
     payload["competitions"] = competitions
     payload["selected_competition"] = "All Competitions"
+    payload["sync_pending"] = sync_pending
     return payload

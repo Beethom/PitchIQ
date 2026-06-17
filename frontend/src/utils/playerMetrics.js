@@ -155,9 +155,11 @@ function estimateBackPasses(stats, position) {
 }
 
 function estimateBigChancesCreated(stats, chancesCreated) {
-  if (stats.bigChancesCreated != null) return stats.bigChancesCreated
-  if (stats.xA != null) return Math.max(0, Math.round(stats.xA * 0.75))
-  return Math.round(chancesCreated * 0.2)
+  const exact = stats.bigChancesCreated ?? 0
+  const estimate = stats.xA != null
+    ? Math.max(0, Math.round(stats.xA * 0.75))
+    : Math.round(chancesCreated * 0.2)
+  return Math.max(exact, estimate)
 }
 
 // Position-specific elite ceilings (per90) — derived from real PL/top-league data
@@ -369,6 +371,7 @@ export function enrichStats(stats = {}, position = 'CM') {
     goalContributions,
     chancesCreated,
     bigChancesCreated,
+    throughPasses: (stats.throughPasses ?? 0) > 0 ? stats.throughPasses : null,
     dribblesAttempted,
     progressivePasses,
     backPasses,
@@ -380,8 +383,10 @@ export function enrichStats(stats = {}, position = 'CM') {
     defensiveWorkrate,
     defensiveContribution,
     // Pass through new fields (already summed in aggregate; preserve whatever is in stats)
-    bigChancesMissed:    stats.bigChancesMissed    ?? null,
-    missedChances:       stats.missedChances        ?? null,
+    bigChancesMissed:    (stats.bigChancesMissed ?? 0) > 0 ? stats.bigChancesMissed : null,
+    missedChances:       (stats.missedChances ?? stats.bigChancesMissed ?? 0) > 0
+      ? (stats.missedChances ?? stats.bigChancesMissed)
+      : null,
     clearances:          stats.clearances           ?? null,
     saves:               stats.saves               ?? null,
     goalsConceded:       stats.goalsConceded        ?? null,
