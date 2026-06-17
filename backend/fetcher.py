@@ -1,5 +1,5 @@
 """
-PitchIQ sync engine — SportApi7 (SofaScore) via RapidAPI.
+PitchVision sync engine — SportApi7 (SofaScore) via RapidAPI.
 
 Full sync:
   1. Paginate /unique-tournament/{tid}/season/{sid}/statistics

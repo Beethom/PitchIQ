@@ -1,5 +1,5 @@
 """
-APScheduler background jobs for PitchIQ syncs.
+APScheduler background jobs for PitchVision syncs.
 Attached to the FastAPI lifespan so they start/stop with the server.
 """
 import logging

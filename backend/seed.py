@@ -1,5 +1,5 @@
 """
-Seed the PitchIQ database with player data.
+Seed the PitchVision database with player data.
 Safe to run multiple times — skips if data already exists.
 
 Photo URLs  : cdn.sofifa.net  (EA Sports FC25 CDN — no auth required)

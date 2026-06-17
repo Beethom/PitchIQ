@@ -35,7 +35,7 @@ export default function Footer() {
         <div>
           <Link to="/" className="inline-flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-950 text-sm font-black text-white">IQ</span>
-            <span className="text-lg font-black text-slate-950">PitchIQ</span>
+            <span className="text-lg font-black text-slate-950">PitchVision</span>
           </Link>
           <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500">
             {text('A football scouting workspace for player discovery, comparison, shortlists, and tournament tracking.')}

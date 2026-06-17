@@ -49,7 +49,7 @@ export default function Navbar() {
               <span className="text-white font-bold text-sm">IQ</span>
             </div>
             <span className="text-lg font-black tracking-tight text-slate-950">
-              PitchIQ
+              PitchVision
             </span>
           </NavLink>
 

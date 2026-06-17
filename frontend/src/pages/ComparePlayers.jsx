@@ -242,7 +242,7 @@ function DebateMode({ playerA, playerB }) {
     ctx.fillRect(32, 32, 1136, 611)
     ctx.fillStyle = '#ffffff'
     ctx.font = '800 54px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
-    ctx.fillText('PitchIQ Debate Mode', 72, 115)
+    ctx.fillText('PitchVision Debate Mode', 72, 115)
     ctx.font = '900 70px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
     ctx.fillText(shortName(playerA.name), 72, 245)
     ctx.fillText(shortName(playerB.name), 760, 245)
@@ -357,7 +357,7 @@ function DebateMini({ label, value, toneClass }) {
 
 function debateSummaryText(playerA, playerB, rows, winner) {
   const rowText = rows.map((row) => `${row.label}: ${row.winner === 'A' ? playerA.name : row.winner === 'B' ? playerB.name : 'Even'}`).join(' | ')
-  return `PitchIQ debate: ${playerA.name} vs ${playerB.name}. Verdict: ${winner ? `${winner.name} has the edge` : 'too close to call'}. ${rowText}.`
+  return `PitchVision debate: ${playerA.name} vs ${playerB.name}. Verdict: ${winner ? `${winner.name} has the edge` : 'too close to call'}. ${rowText}.`
 }
 
 function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {

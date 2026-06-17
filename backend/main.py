@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="PitchIQ API",
+    title="PitchVision API",
     version="1.0.0",
     description="Soccer player analytics API",
     lifespan=lifespan,

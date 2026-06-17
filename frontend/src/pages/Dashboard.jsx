@@ -318,7 +318,7 @@ export default function Dashboard({ mode = 'live' }) {
             <div className="space-y-5">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-100">
                 <Sparkles size={13} />
-                  {isWorldCupMode ? 'World Cup Mode' : 'PitchIQ Live Desk'}
+                  {isWorldCupMode ? 'World Cup Mode' : 'PitchVision Live Desk'}
               </div>
 
               <div className="max-w-3xl">
