@@ -1630,8 +1630,8 @@ def _fixture_positional_data(source_player_id: int, fixture_id: int) -> dict:
         if st.get("accurateLongBalls") is not None:
             extra["accurateLongBalls"] = st.get("accurateLongBalls")
             extra["longBalls"] = st.get("totalLongBalls")
-        if st.get("blockedScoringAttempt") is not None:
-            extra["blocks"] = st.get("blockedScoringAttempt")
+        if st.get("outfielderBlock") is not None:
+            extra["blocks"] = st.get("outfielderBlock")
         if st.get("expectedAssists") is not None:
             extra["xA"] = st.get("expectedAssists")
         if st.get("keyPass") is not None:

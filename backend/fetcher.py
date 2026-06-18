@@ -554,6 +554,7 @@ def _lineup_stats_from_block(
             or stats_block.get("accurateThroughPasses")
             or stats_block.get("totalThroughPasses")
         ),
+        "oppHalfPasses": _safe_int(stats_block.get("accurateOppositionHalfPasses")),
         "dribbles": dribbles,
         "dribbleSuccess": dribble_pct,
         "possessionLost": _safe_int(stats_block.get("possessionLost") or stats_block.get("possessionLostCtrl")),
@@ -578,7 +579,8 @@ def _lineup_stats_from_block(
         "missedChances":     _safe_int(stats_block.get("missedChances")),
         # Defensive / outfield
         "clearances":        _safe_int(stats_block.get("clearances") or stats_block.get("totalClearance")),
-        "blocks":            _safe_int(stats_block.get("blockedScoringAttempt") or stats_block.get("blocks")),
+        "blocks":            _safe_int(stats_block.get("outfielderBlock") or stats_block.get("blocks")),
+        "shotsBlocked":      _safe_int(stats_block.get("blockedScoringAttempt")),
         "duelsWon":          _safe_int(stats_block.get("duelWon")),
         "foulsSuffered":     _safe_int(stats_block.get("wasFouled")),
         # Carrying / physical
@@ -616,12 +618,12 @@ def _add_match_stats(aggregate: dict, match_stats: dict):
     sum_keys = (
         "appearances", "starts", "minutesPlayed", "goals", "assists", "shots", "shotsOnTarget",
         "keyPasses", "totalPasses", "touches", "accurateCrosses", "crosses", "finalThirdPasses",
-        "throughPasses", "dribbles", "possessionLost", "dispossessed", "miscontrols",
+        "throughPasses", "oppHalfPasses", "dribbles", "possessionLost", "dispossessed", "miscontrols",
         "recoveries", "tackles", "successfulTackles", "fouls", "interceptions",
         "aerialDuelsWon", "yellowCards", "redCards", "_accuratePasses", "_totalDribbles",
         "bigChancesCreated", "bigChancesMissed", "missedChances", "clearances",
         "saves", "goalsConceded", "cleanSheets", "totalShotsFaced", "punches", "runOuts", "highClaims",
-        "blocks", "duelsWon", "foulsSuffered", "carries", "progressiveCarries", "sprints",
+        "blocks", "shotsBlocked", "duelsWon", "foulsSuffered", "carries", "progressiveCarries", "sprints",
     )
     for key in sum_keys:
         aggregate[key] = aggregate.get(key, 0) + (match_stats.get(key, 0) or 0)
