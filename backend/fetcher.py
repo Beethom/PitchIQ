@@ -578,6 +578,16 @@ def _lineup_stats_from_block(
         "missedChances":     _safe_int(stats_block.get("missedChances")),
         # Defensive / outfield
         "clearances":        _safe_int(stats_block.get("clearances") or stats_block.get("totalClearance")),
+        "blocks":            _safe_int(stats_block.get("blockedScoringAttempt") or stats_block.get("blocks")),
+        "duelsWon":          _safe_int(stats_block.get("duelWon")),
+        "foulsSuffered":     _safe_int(stats_block.get("wasFouled")),
+        # Carrying / physical
+        "carries":            _safe_int(stats_block.get("ballCarriesCount")),
+        "progressiveCarries": _safe_int(stats_block.get("progressiveBallCarriesCount")),
+        "distanceCovered":    _round2(stats_block.get("kilometersCovered") or 0.0),
+        "sprints":            _safe_int(stats_block.get("numberOfSprints")),
+        "topSpeed":           _round1(_safe_float(stats_block.get("topSpeed"))),
+        "goalsPrevented":     _round2(stats_block.get("goalsPrevented") or 0.0),
         # Goalkeeper
         "saves":           _safe_int(
             stats_block.get("saves")
@@ -611,11 +621,16 @@ def _add_match_stats(aggregate: dict, match_stats: dict):
         "aerialDuelsWon", "yellowCards", "redCards", "_accuratePasses", "_totalDribbles",
         "bigChancesCreated", "bigChancesMissed", "missedChances", "clearances",
         "saves", "goalsConceded", "cleanSheets", "totalShotsFaced", "punches", "runOuts", "highClaims",
+        "blocks", "duelsWon", "foulsSuffered", "carries", "progressiveCarries", "sprints",
     )
     for key in sum_keys:
         aggregate[key] = aggregate.get(key, 0) + (match_stats.get(key, 0) or 0)
     aggregate["xG"] = _round2((aggregate.get("xG", 0) or 0) + (match_stats.get("xG", 0) or 0))
     aggregate["xA"] = _round2((aggregate.get("xA", 0) or 0) + (match_stats.get("xA", 0) or 0))
+    aggregate["distanceCovered"] = _round2((aggregate.get("distanceCovered", 0) or 0) + (match_stats.get("distanceCovered", 0) or 0))
+    aggregate["goalsPrevented"] = _round2((aggregate.get("goalsPrevented", 0) or 0) + (match_stats.get("goalsPrevented", 0) or 0))
+    # Top speed is a peak, not a total — keep the highest across matches.
+    aggregate["topSpeed"] = max(aggregate.get("topSpeed", 0) or 0, match_stats.get("topSpeed", 0) or 0)
     if match_stats.get("rating"):
         aggregate["_rating_sum"] = aggregate.get("_rating_sum", 0.0) + match_stats["rating"]
         aggregate["_rating_count"] = aggregate.get("_rating_count", 0) + 1
