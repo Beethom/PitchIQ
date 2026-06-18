@@ -1136,6 +1136,19 @@ def _rollup_competition_player_stats(
     for fixture_id in fixture_ids:
         _repair_keeper_match_stats_from_fixture_goals(db, fixture_id, position_overrides=position_overrides)
 
+    # Tally penalty goals per player from match incidents (goal class "penalty").
+    penalty_goals: dict[int, int] = {}
+    for fixture_id in fixture_ids:
+        try:
+            inc = _get(f"/api/v1/event/{fixture_id}/incidents")
+        except Exception:
+            continue
+        for item in (inc.get("incidents") or []):
+            if item.get("incidentType") == "goal" and item.get("incidentClass") == "penalty":
+                pid = (item.get("player") or {}).get("id")
+                if pid:
+                    penalty_goals[pid] = penalty_goals.get(pid, 0) + 1
+
     for source_player_id in source_player_ids:
         matches = (
             db.query(models.PlayerMatchStat)
@@ -1163,6 +1176,7 @@ def _rollup_competition_player_stats(
             league.get("season_label", SEASON_LABEL),
         )
         stats = _finalize_aggregate_stats(aggregate)
+        stats["penaltyGoals"] = penalty_goals.get(source_player_id, 0)
 
         if player:
             player.stats = stats

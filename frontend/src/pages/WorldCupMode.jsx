@@ -14,6 +14,7 @@ import PlayerSearch from '../components/player/PlayerSearch'
 import { usePlayers } from '../hooks/usePlayers'
 import { adminService } from '../services/adminService'
 import { playerService } from '../services/playerService'
+import { saveLeaderboardImage, shareLeaderboardToX } from '../utils/shareLeaderboard'
 
 const OFFICIAL_FILTERS = {
   league: 'FIFA World Cup',
@@ -44,6 +45,7 @@ const LEADERBOARD_CATEGORIES = [
       { key: 'goals',    label: 'Goals',            fn: (p) => p.stats?.goals ?? 0,                                      fmt: (v) => `${v}` },
       { key: 'assists',  label: 'Assists',          fn: (p) => p.stats?.assists ?? 0,                                    fmt: (v) => `${v}` },
       { key: 'ga',       label: 'Goals + Assists',  fn: (p) => (p.stats?.goals ?? 0) + (p.stats?.assists ?? 0),           fmt: (v) => `${v}` },
+      { key: 'penaltyGoals', label: 'Penalty Goals', fn: (p) => p.stats?.penaltyGoals ?? 0,                              fmt: (v) => `${v}` },
       { key: 'rating',   label: 'Rating',           fn: (p) => p.stats?.rating ?? 0,                                     fmt: (v) => Number(v).toFixed(2) },
       { key: 'minutes',  label: 'Minutes Played',   fn: (p) => p.stats?.minutesPlayed ?? 0,                              fmt: (v) => `${v}` },
       { key: 'foulsSuffered', label: 'Fouls Suffered', fn: (p) => p.stats?.foulsSuffered ?? 0,                            fmt: (v) => `${v}` },
@@ -56,10 +58,8 @@ const LEADERBOARD_CATEGORIES = [
       { key: 'shots',            label: 'Shots',               fn: (p) => p.stats?.shots ?? 0,                       fmt: (v) => `${v}` },
       { key: 'shotsOnTarget',    label: 'Shots on Goal',       fn: (p) => p.stats?.shotsOnTarget ?? 0,               fmt: (v) => `${v}` },
       { key: 'xG',               label: 'Expected Goals',      fn: (p) => p.stats?.xG ?? 0,                          fmt: (v) => Number(v).toFixed(2) },
-      { key: 'keyPasses',        label: 'Key Passes',          fn: (p) => p.stats?.keyPasses ?? 0,                   fmt: (v) => `${v}` },
       { key: 'chancesCreated',   label: 'Chances Created',     fn: (p) => p.stats?.chancesCreated ?? 0,              fmt: (v) => `${v}` },
       { key: 'bigChancesCreated',label: 'Big Chances Created', fn: (p) => p.stats?.bigChancesCreated ?? 0,           fmt: (v) => `${v}` },
-      { key: 'xA',               label: 'Expected Assists',    fn: (p) => p.stats?.xA ?? 0,                          fmt: (v) => Number(v).toFixed(2) },
       { key: 'bigChancesMissed', label: 'Big Chances Missed',  fn: (p) => p.stats?.bigChancesMissed ?? 0,            fmt: (v) => `${v}` },
     ],
   },
@@ -70,8 +70,9 @@ const LEADERBOARD_CATEGORIES = [
       { key: 'totalPasses',      label: 'Passes Attempted',    fn: (p) => p.stats?.totalPasses ?? 0,                 fmt: (v) => `${v}` },
       { key: 'accuratePasses',   label: 'Successful Passes',   fn: (p) => p.stats?._accuratePasses ?? 0,             fmt: (v) => `${v}` },
       { key: 'passAccuracy',     label: 'Pass Accuracy',       fn: (p) => p.stats?.passAccuracy ?? 0,                fmt: (v) => `${Number(v).toFixed(1)}%` },
+      { key: 'keyPasses',        label: 'Key Passes',          fn: (p) => p.stats?.keyPasses ?? 0,                   fmt: (v) => `${v}` },
+      { key: 'xA',               label: 'Expected Assists',    fn: (p) => p.stats?.xA ?? 0,                          fmt: (v) => Number(v).toFixed(2) },
       { key: 'touches',          label: 'Touches',             fn: (p) => p.stats?.touches ?? 0,                     fmt: (v) => `${v}` },
-      { key: 'possessionLost',   label: 'Possession Lost',     fn: (p) => p.stats?.possessionLost ?? 0,              fmt: (v) => `${v}` },
       { key: 'oppHalfPasses',    label: 'Passes into Opp. Half', fn: (p) => p.stats?.oppHalfPasses ?? 0,             fmt: (v) => `${v}` },
       { key: 'crosses',          label: 'Crosses',             fn: (p) => p.stats?.crosses ?? 0,                     fmt: (v) => `${v}` },
       { key: 'accurateCrosses',  label: 'Accurate Crosses',    fn: (p) => p.stats?.accurateCrosses ?? 0,             fmt: (v) => `${v}` },
@@ -86,6 +87,7 @@ const LEADERBOARD_CATEGORIES = [
       { key: 'dribbleSuccess',   label: 'Dribble Success',     fn: (p) => p.stats?.dribbleSuccess ?? 0,             fmt: (v) => `${Number(v).toFixed(1)}%` },
       { key: 'carries',          label: 'Ball Carries',        fn: (p) => p.stats?.carries ?? 0,                    fmt: (v) => `${v}` },
       { key: 'progressiveCarries', label: 'Progressive Carries', fn: (p) => p.stats?.progressiveCarries ?? 0,       fmt: (v) => `${v}` },
+      { key: 'possessionLost',   label: 'Possession Lost',     fn: (p) => p.stats?.possessionLost ?? 0,             fmt: (v) => `${v}` },
       { key: 'dispossessed',     label: 'Dispossessed',        fn: (p) => p.stats?.dispossessed ?? 0,               fmt: (v) => `${v}` },
       { key: 'miscontrols',      label: 'Miscontrols',         fn: (p) => p.stats?.miscontrols ?? 0,                fmt: (v) => `${v}` },
     ],
@@ -130,7 +132,8 @@ const LEADERBOARD_CATEGORIES = [
       { key: 'savesP90',      label: 'Saves per 90',      minMins: GK_MIN_MINUTES, fn: (p) => p90(p.stats?.saves ?? 0, p.stats?.minutesPlayed ?? 0),              fmt: (v) => Number(v).toFixed(2) },
       { key: 'savePct',       label: 'Save Percentage',   minMins: GK_MIN_MINUTES, minShotsFaced: GK_MIN_SHOTS_FACED, fn: savePercentage,                         fmt: (v) => `${Number(v).toFixed(1)}%` },
       { key: 'cleanSheets',   label: 'Clean Sheets',      fn: (p) => p.stats?.cleanSheets ?? 0,                                                                    fmt: (v) => `${v}` },
-      { key: 'goalsConceded', label: 'Goals Conceded',    lowerIsBetter: true, fn: (p) => p.stats?.goalsConceded ?? 0,                                             fmt: (v) => `${v}` },
+      { key: 'leastConceded', label: 'Least Conceded',    lowerIsBetter: true, minMins: GK_MIN_MINUTES, fn: (p) => p.stats?.goalsConceded ?? 0,                    fmt: (v) => `${v}` },
+      { key: 'mostConceded',  label: 'Most Conceded',     fn: (p) => p.stats?.goalsConceded ?? 0,                                                                  fmt: (v) => `${v}` },
       { key: 'shotsFaced',    label: 'Total Shots Faced', fn: (p) => p.stats?.totalShotsFaced ?? 0,                                                                fmt: (v) => `${v}` },
       { key: 'goalsPrevented',label: 'Goals Prevented',   minMins: GK_MIN_MINUTES, fn: (p) => p.stats?.goalsPrevented ?? 0,                                        fmt: (v) => Number(v).toFixed(2) },
       { key: 'clearances',    label: 'Clearances',        fn: (p) => p.stats?.clearances ?? 0,                                                                     fmt: (v) => `${v}` },
@@ -417,6 +420,28 @@ export default function WorldCupMode() {
                   </div>
                 </div>
                 <div className="p-5">
+                  {lbPlayers.length > 0 && (() => {
+                    const activeTab = leaderboardTabs.find((t) => t.key === lbTab)
+                    if (!activeTab) return null
+                    return (
+                      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => shareLeaderboardToX(activeCategory?.label ?? '', activeTab, lbPlayers)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
+                        >
+                          𝕏 Share to X
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => saveLeaderboardImage(activeCategory?.label ?? '', activeTab, lbPlayers)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                          Save image
+                        </button>
+                      </div>
+                    )
+                  })()}
                   <LeaderboardList players={lbPlayers} tabKey={lbTab} tabs={leaderboardTabs} />
                 </div>
               </section>
