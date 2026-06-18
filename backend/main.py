@@ -61,4 +61,11 @@ if os.path.isdir(_static_dir):
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_spa(full_path: str):
+        # Serve real root-level static files (og-image.png, robots.txt,
+        # sitemap.xml, favicon, etc.) when they exist; otherwise fall back to
+        # the SPA so client-side routing works.
+        if full_path:
+            candidate = os.path.normpath(os.path.join(_static_dir, full_path))
+            if candidate.startswith(_static_dir) and os.path.isfile(candidate):
+                return FileResponse(candidate)
         return FileResponse(os.path.join(_static_dir, "index.html"))

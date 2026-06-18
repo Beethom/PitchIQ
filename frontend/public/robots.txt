@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /admin-pitchiq
 
-Sitemap: https://pitchvision.app/sitemap.xml
+Sitemap: https://www.pitchvision.app/sitemap.xml
