@@ -119,6 +119,103 @@ function buildLeaders(players) {
   }
 }
 
+function WorldCupPulse() {
+  const [fixtures, setFixtures] = useState([])
+  const [topScorer, setTopScorer] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    playerService.getWorldCupFixtures(40)
+      .then((data) => { if (active) setFixtures(data ?? []) })
+      .catch(() => {})
+    playerService.getAll({ league: 'FIFA World Cup', season: '2026', sort: 'goals', limit: 5 })
+      .then((data) => {
+        if (!active) return
+        const best = (data ?? []).filter((p) => (p.stats?.goals ?? 0) > 0)
+          .sort((a, b) => (b.stats?.goals ?? 0) - (a.stats?.goals ?? 0))[0]
+        setTopScorer(best ?? null)
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+
+  const order = { inprogress: 0, halftime: 0, notstarted: 1, finished: 2 }
+  const sorted = [...fixtures].sort((a, b) => {
+    const oa = order[a.status_type] ?? 3
+    const ob = order[b.status_type] ?? 3
+    if (oa !== ob) return oa - ob
+    return (a.timestamp ?? 0) - (b.timestamp ?? 0)
+  }).slice(0, 12)
+
+  if (!sorted.length && !topScorer) return null
+
+  return (
+    <div className="border-b border-slate-200 bg-slate-950">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-3 overflow-x-auto py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <span className="flex shrink-0 items-center gap-2 pr-1 text-[11px] font-black uppercase tracking-[0.18em] text-sky-300">
+            <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-sky-400" />
+            World Cup
+          </span>
+
+          {topScorer && (
+            <Link
+              to="/world-cup"
+              className="flex shrink-0 items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-white transition hover:bg-amber-400/20"
+            >
+              <span className="text-base">🥇</span>
+              <span className="min-w-0">
+                <span className="block text-[9px] font-black uppercase tracking-[0.16em] text-amber-300">Golden Boot</span>
+                <span className="block truncate text-xs font-bold">{topScorer.name} · {topScorer.stats?.goals ?? 0}</span>
+              </span>
+            </Link>
+          )}
+
+          {sorted.map((f) => {
+            const live = f.status_type === 'inprogress'
+            const done = f.status_type === 'finished'
+            return (
+              <Link
+                key={f.fixture_id}
+                to={`/world-cup/matches/${f.fixture_id}`}
+                className="flex shrink-0 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2 transition hover:bg-white/10"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <CountryFlag code={f.home?.flag_code} nationality={f.home?.name} size="xs" />
+                    <span className="w-16 truncate text-xs font-bold text-white">{f.home?.short_name || f.home?.name}</span>
+                    {(live || done) && <span className="ml-auto text-xs font-black tabular-nums text-white">{f.home?.score ?? 0}</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CountryFlag code={f.away?.flag_code} nationality={f.away?.name} size="xs" />
+                    <span className="w-16 truncate text-xs font-bold text-white">{f.away?.short_name || f.away?.name}</span>
+                    {(live || done) && <span className="ml-auto text-xs font-black tabular-nums text-white">{f.away?.score ?? 0}</span>}
+                  </div>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.12em] ${
+                  live ? 'bg-red-500 text-white' : done ? 'bg-white/10 text-slate-300' : 'bg-sky-500/20 text-sky-200'
+                }`}>
+                  {live ? (f.minute ? `${f.minute}'` : 'LIVE') : done ? 'FT' : formatKickoffShort(f)}
+                </span>
+              </Link>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function formatKickoffShort(f) {
+  const ts = f.timestamp ? f.timestamp * 1000 : (f.date ? new Date(f.date).getTime() : 0)
+  if (!ts) return 'TBD'
+  try {
+    return new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(ts))
+  } catch {
+    return 'TBD'
+  }
+}
+
 const POPULAR_SEARCHES = [
   { label: 'Messi', query: 'Lionel Messi', hint: 'MLS creator-finisher' },
   { label: 'Yamal', query: 'Lamine Yamal', hint: 'U23 wide creator' },
@@ -420,6 +517,8 @@ export default function Dashboard({ mode = 'live' }) {
           </div>
         </div>
       </motion.div>
+
+      <WorldCupPulse />
 
       <PageContainer>
         <DashboardFilters
