@@ -166,8 +166,10 @@ def share_page_html(label, tab_key):
 <meta name="twitter:title" content="{title}" />
 <meta name="twitter:description" content="{desc}" />
 <meta name="twitter:image" content="{img}" />
-<meta http-equiv="refresh" content="0; url={target}" />
 </head><body>
-<p>Redirecting to <a href="{target}">PitchVision</a>…</p>
+<p>Opening <a href="{target}">PitchVision</a>…</p>
+<!-- JS-only redirect: crawlers (which don't run JS) read the card above; humans
+     get sent into the app. No meta-refresh, or the scraper follows it and reads
+     the destination's generic tags instead of this leaderboard card. -->
 <script>window.location.replace({target!r})</script>
 </body></html>"""
