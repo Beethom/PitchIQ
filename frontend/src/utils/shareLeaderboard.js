@@ -36,9 +36,9 @@ export function buildLeaderboardCaption(categoryLabel, tab, players) {
 export function shareLeaderboardToX(categoryLabel, tab, players) {
   const text = buildLeaderboardCaption(categoryLabel, tab, players)
   // Share a URL whose OG/Twitter tags render the leaderboard image as a card;
-  // clicking it redirects into the app. The hourly `v` token gives X a fresh URL
-  // so it re-fetches the current leaderboard image instead of a cached card.
-  const v = Math.floor(Date.now() / 3_600_000)
+  // clicking it redirects into the app. A unique `v` token per share guarantees
+  // X scrapes a fresh URL (never a previously-cached card).
+  const v = Date.now().toString(36)
   const shareUrl = `https://www.pitchvision.app/share/wc-leaders?tab=${encodeURIComponent(tab.key)}&v=${v}`
   const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`
   window.open(url, '_blank', 'noopener,noreferrer')
