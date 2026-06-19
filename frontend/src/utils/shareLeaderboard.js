@@ -35,7 +35,10 @@ export function buildLeaderboardCaption(categoryLabel, tab, players) {
 
 export function shareLeaderboardToX(categoryLabel, tab, players) {
   const text = buildLeaderboardCaption(categoryLabel, tab, players)
-  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent('https://www.pitchvision.app/world-cup')}`
+  // Share a URL whose OG/Twitter tags render the leaderboard image as a card;
+  // clicking it redirects into the app.
+  const shareUrl = `https://www.pitchvision.app/share/wc-leaders?tab=${encodeURIComponent(tab.key)}`
+  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 

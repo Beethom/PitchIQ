@@ -107,6 +107,34 @@ def sitemap():
     return Response("\n".join(body), media_type="application/xml")
 
 
+# --- World Cup stat-leader share cards (Twitter/X image + OG page) ---
+@app.get("/api/share/wc-leaders.png", include_in_schema=False)
+def share_leaders_png(tab: str = "goals"):
+    from fastapi.responses import Response
+    from database import SessionLocal
+    import crud, share_cards
+
+    db = SessionLocal()
+    try:
+        players = crud.get_players(db, league="FIFA World Cup", season="2026", limit=2000)
+    finally:
+        db.close()
+    label, rows, _ = share_cards.rank_players(players, tab)
+    if not label:
+        label, rows = "Goals", []
+    png = share_cards.render_leaders_png(label, rows or [])
+    return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=600"})
+
+
+@app.get("/share/wc-leaders", include_in_schema=False)
+def share_leaders_page(tab: str = "goals"):
+    from fastapi.responses import HTMLResponse
+    import share_cards
+    spec = share_cards.TABS.get(tab)
+    label = spec[0] if spec else "Goals"
+    return HTMLResponse(share_cards.share_page_html(label, tab))
+
+
 # Serve React frontend — must come after all /api routes
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):
