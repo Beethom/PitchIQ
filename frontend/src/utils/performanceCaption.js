@@ -23,6 +23,11 @@ export function buildPerformanceCaption(player) {
   const passVol = (s.totalPasses ?? 0) >= 20
   const dribAtt = s.dribblesAttempted ?? s._totalDribbles ?? s.dribbles ?? 0
 
+  // Goals & assists lead for ANY position (a defender/keeper who scores still
+  // gets the headline).
+  if ((s.goals ?? 0) > 0) add('⚽', `${n(s.goals)} goal${n(s.goals) > 1 ? 's' : ''}`, medal(n(s.goals), 2, 1))
+  if ((s.assists ?? 0) > 0) add('🅰️', `${n(s.assists)} assist${n(s.assists) > 1 ? 's' : ''}`, medal(n(s.assists), 2, 1))
+
   if (isGk) {
     const savePct = s.totalShotsFaced ? ((s.saves ?? 0) / s.totalShotsFaced) * 100 : null
     if ((s.saves ?? 0) > 0) add('🧤', `${n(s.saves)} saves`, medal(n(s.saves), 5, 3))
@@ -40,11 +45,8 @@ export function buildPerformanceCaption(player) {
     if ((s.clearances ?? 0) > 0) add('🧱', `${n(s.clearances)} clearances`, medal(n(s.clearances), 5, 3))
     if ((s.recoveries ?? 0) > 0) add('💪', `${n(s.recoveries)} recoveries`, medal(n(s.recoveries), 8, 6))
     if ((s.aerialDuelsWon ?? 0) > 0) add('🏅', `${n(s.aerialDuelsWon)} duels won`, medal(n(s.aerialDuelsWon), 6, 4))
-    if ((s.assists ?? 0) > 0) add('🅰️', `${n(s.assists)} assists`)
     if ((s.chancesCreated ?? 0) > 0) add('😮', `${n(s.chancesCreated)} chances created`)
   } else {
-    if ((s.goals ?? 0) > 0) add('⚽', `${n(s.goals)} goal${n(s.goals) > 1 ? 's' : ''}`, medal(n(s.goals), 2, 1))
-    if ((s.assists ?? 0) > 0) add('🅰️', `${n(s.assists)} assist${n(s.assists) > 1 ? 's' : ''}`, medal(n(s.assists), 2, 1))
     if ((s.chancesCreated ?? 0) > 0) add('😳', `${n(s.chancesCreated)} chances created`, medal(n(s.chancesCreated), 4, 3))
     if ((s.bigChancesCreated ?? 0) > 0) add('😮', `${n(s.bigChancesCreated)} big chance${n(s.bigChancesCreated) > 1 ? 's' : ''} created`, medal(n(s.bigChancesCreated), 2, 1))
     if ((s.dribbles ?? 0) > 0) add('💨', `${n(s.dribbles)}/${n(dribAtt)} successful dribbles`, (n(s.dribbles) >= 3 && n(s.dribbles) === n(dribAtt)) ? ' 🥇' : (n(s.dribbles) >= 3 ? ' 🥈' : ''))
