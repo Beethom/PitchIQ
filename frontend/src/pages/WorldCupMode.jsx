@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import PageContainer from '../components/layout/PageContainer'
 import Loader from '../components/common/Loader'
+import Seo from '../components/common/Seo'
 import ErrorMessage from '../components/common/ErrorMessage'
 import EmptyState from '../components/common/EmptyState'
 import CountryFlag from '../components/common/CountryFlag'
@@ -263,6 +264,11 @@ export default function WorldCupMode() {
 
   return (
     <div className="flex-1 min-w-0 bg-slate-50">
+      <Seo
+        title="World Cup 2026 Stats & Leaders"
+        description="FIFA World Cup 2026 player stat leaders — goals, assists, xG, dribbles, duels, distance covered, top speed and more, updated live on PitchVision."
+        path="/world-cup"
+      />
       {/* Hero header */}
       <section className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">

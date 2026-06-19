@@ -5,6 +5,7 @@ import PageContainer from '../components/layout/PageContainer'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import CountryFlag from '../components/common/CountryFlag'
+import Seo from '../components/common/Seo'
 import { directSofaScoreImageUrl, localMediaUrl } from '../utils/mediaUrl'
 import { playerService } from '../services/playerService'
 import { useLanguage } from '../i18n/LanguageProvider'
@@ -82,8 +83,30 @@ export default function WorldCupMatchDetail() {
   const title = fixture ? `${fixture.home?.short_name || fixture.home?.name} vs ${fixture.away?.short_name || fixture.away?.name}` : 'World Cup Match'
   const stats = useMemo(() => prioritizeStats(detail?.stats ?? []), [detail?.stats])
 
+  const matchName = fixture ? `${fixture.home?.name} vs ${fixture.away?.name}` : 'World Cup Match'
+  const seoJsonLd = fixture ? {
+    '@context': 'https://schema.org',
+    '@type': 'SportsEvent',
+    name: `${fixture.home?.name} vs ${fixture.away?.name} — FIFA World Cup 2026`,
+    sport: 'Soccer',
+    startDate: fixture.date,
+    competitor: [
+      { '@type': 'SportsTeam', name: fixture.home?.name },
+      { '@type': 'SportsTeam', name: fixture.away?.name },
+    ],
+    url: `https://www.pitchvision.app/world-cup/matches/${fixtureId}`,
+  } : null
+
   return (
     <div className="flex-1 min-w-0 bg-slate-50">
+      {fixture && (
+        <Seo
+          title={`${matchName} — World Cup 2026`}
+          description={`${matchName} FIFA World Cup 2026: lineups, live stats, shot map, attack momentum and player ratings on PitchVision.`}
+          path={`/world-cup/matches/${fixtureId}`}
+          jsonLd={seoJsonLd}
+        />
+      )}
       <section className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
           <Link

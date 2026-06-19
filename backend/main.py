@@ -54,6 +54,59 @@ app.router.redirect_slashes = False
 def health():
     return {"status": "ok", "version": "1.0.0"}
 
+
+# Dynamic sitemap — static pages + every World Cup player & match.
+# Declared before the SPA catch-all so it takes precedence over any static file.
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap():
+    from fastapi.responses import Response
+    from database import SessionLocal
+    import models
+
+    base = "https://www.pitchvision.app"
+    urls = [
+        (f"{base}/", "daily", "1.0"),
+        (f"{base}/world-cup", "hourly", "0.9"),
+        (f"{base}/world-cup/matches", "hourly", "0.8"),
+        (f"{base}/scouting-board", "daily", "0.7"),
+        (f"{base}/compare", "weekly", "0.5"),
+        (f"{base}/about", "monthly", "0.4"),
+        (f"{base}/how-it-works", "monthly", "0.4"),
+        (f"{base}/faq", "monthly", "0.4"),
+        (f"{base}/coverage", "monthly", "0.4"),
+        (f"{base}/methodology", "monthly", "0.4"),
+    ]
+    db = SessionLocal()
+    try:
+        players = (
+            db.query(models.Player.id)
+            .filter(models.Player.league == "FIFA World Cup", models.Player.season == "2026")
+            .all()
+        )
+        for (pid,) in players:
+            urls.append((f"{base}/player/{pid}", "weekly", "0.6"))
+        # Match URLs from already-synced data (no live API calls in the sitemap).
+        fixture_ids = (
+            db.query(models.PlayerMatchStat.fixture_id)
+            .filter(models.PlayerMatchStat.source_league_id == 16,
+                    models.PlayerMatchStat.source_season == 58210)
+            .distinct()
+            .all()
+        )
+        for (fid,) in fixture_ids:
+            if fid:
+                urls.append((f"{base}/world-cup/matches/{fid}", "weekly", "0.6"))
+    finally:
+        db.close()
+
+    body = ['<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, freq, pri in urls:
+        body.append(f"<url><loc>{loc}</loc><changefreq>{freq}</changefreq><priority>{pri}</priority></url>")
+    body.append("</urlset>")
+    return Response("\n".join(body), media_type="application/xml")
+
+
 # Serve React frontend — must come after all /api routes
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):

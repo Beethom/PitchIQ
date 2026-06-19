@@ -21,6 +21,7 @@ import PlayerAvatar from '../components/player/PlayerAvatar'
 import PlayerSearch from '../components/player/PlayerSearch'
 import ClubLogo from '../components/common/ClubLogo'
 import CountryFlag from '../components/common/CountryFlag'
+import Seo from '../components/common/Seo'
 import { usePlayers } from '../hooks/usePlayers'
 import { playerService } from '../services/playerService'
 import { formatStat } from '../utils/formatStat'
@@ -404,6 +405,11 @@ export default function Dashboard({ mode = 'live' }) {
 
   return (
     <div className="flex-1 min-w-0 overflow-hidden">
+      <Seo
+        title="Football Player Analytics & World Cup 2026 Stats"
+        description="PitchVision — football player analytics with ratings, leaderboards, scouting tools, shareable scout cards, and live FIFA World Cup 2026 stats."
+        path="/"
+      />
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}

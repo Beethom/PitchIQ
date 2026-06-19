@@ -25,6 +25,7 @@ import FormTrendChart from '../components/charts/FormTrendChart'
 import ChartCard from '../components/charts/ChartCard'
 import ClubLogo from '../components/common/ClubLogo'
 import CountryFlag from '../components/common/CountryFlag'
+import Seo from '../components/common/Seo'
 import Loader from '../components/common/Loader'
 import ErrorMessage from '../components/common/ErrorMessage'
 import { usePlayer } from '../hooks/usePlayers'
@@ -328,8 +329,21 @@ export default function PlayerDetails() {
     }
   }
 
+  const seoDesc = `${player.name} — ${player.position}, ${player.club}. ${competitionDisplayName(player.league)} ${player.season} stats: ${player.stats?.goals ?? 0} goals, ${player.stats?.assists ?? 0} assists, ${player.stats?.appearances ?? 0} apps, ${player.stats?.rating ? Number(player.stats.rating).toFixed(2) : '—'} rating. Heatmaps, shot maps & match performance on PitchVision.`
+  const seoJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    name: player.name,
+    jobTitle: 'Footballer',
+    nationality: player.nationality,
+    affiliation: player.club,
+    image: player.photo_url || (player.source_player_id ? `https://www.pitchvision.app/api/media/player/${player.source_player_id}/image` : undefined),
+    url: `https://www.pitchvision.app/player/${id}`,
+  }
+
   return (
     <div className="flex-1 min-w-0">
+      <Seo title={`${player.name} — ${player.position} Stats`} description={seoDesc} path={`/player/${id}`} jsonLd={seoJsonLd} />
       {/* Sticky compact header */}
       <motion.div
         initial={false}
