@@ -1153,21 +1153,30 @@ def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
     from fetcher import _flag_code, _get
 
     cache_key = f"world_cup_fixtures:{limit}"
+    stale_key = f"world_cup_fixtures_stale:{limit}"
     cached = _cache_get(cache_key, 60)
     if cached is not None:
         return cached
 
     events: dict[int, dict] = {}
+    fetch_failed = False
     for endpoint in ("last", "next"):
         for page_idx in range(2):
             try:
                 data = _get(f"/api/v1/unique-tournament/16/season/58210/events/{endpoint}/{page_idx}")
             except Exception:
+                fetch_failed = True
                 break
             for event in data.get("events", []):
                 fixture = _world_cup_event_payload(event)
                 if fixture:
                     events[fixture["fixture_id"]] = fixture
+
+    # Provider unavailable/rate-limited: serve the last good result rather than
+    # hanging or returning an empty list.
+    if not events and fetch_failed:
+        stale = _WORLD_CUP_PROVIDER_CACHE.get(stale_key)
+        return stale[1] if stale else []
 
     def sort_key(item: dict):
         timestamp = item.get("timestamp") or 0
@@ -1176,7 +1185,9 @@ def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
         time_sort = timestamp if item.get("status_type") != "finished" else -timestamp
         return (0 if is_today else 1, status_rank, time_sort)
 
-    return _cache_set(cache_key, sorted(events.values(), key=sort_key)[:limit])
+    result = sorted(events.values(), key=sort_key)[:limit]
+    _cache_set(stale_key, result)  # long-lived last-good copy for fallback
+    return _cache_set(cache_key, result)
 
 
 def _world_cup_team_payload(team: dict, score: Optional[dict]) -> dict:

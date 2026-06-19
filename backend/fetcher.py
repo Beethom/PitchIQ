@@ -201,17 +201,23 @@ def _headers() -> dict:
     }
 
 
+_RATE_LIMIT_UNTIL = 0.0  # global cooldown so requests fail fast while throttled
+
+
 def _get(path: str, params: Optional[dict] = None, retry: int = 0) -> dict:
+    global _RATE_LIMIT_UNTIL
+    # While the provider is rate-limiting us, fail immediately instead of
+    # blocking web requests on long backoff sleeps. Background syncs retry later.
+    if time.time() < _RATE_LIMIT_UNTIL:
+        raise RuntimeError("Provider rate-limit cooldown active")
+
     url = f"{API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
-    resp = requests.get(url, params=params, headers=_headers(), timeout=30)
+    resp = requests.get(url, params=params, headers=_headers(), timeout=15)
 
     if resp.status_code == 429:
-        if retry >= 5:
-            raise RuntimeError(f"Rate limit persisted after {retry} retries.")
-        wait = 20 * (retry + 1)
-        log.warning("Rate limited — waiting %ss", wait)
-        time.sleep(wait)
-        return _get(path, params=params, retry=retry + 1)
+        _RATE_LIMIT_UNTIL = time.time() + 60
+        log.warning("Rate limited — backing off for 60s")
+        raise RuntimeError("Provider rate-limited (60s cooldown)")
 
     if resp.status_code not in (200, 201):
         snippet = resp.text[:180]
