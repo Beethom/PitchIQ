@@ -18,18 +18,48 @@ _WORLD_CUP_PROVIDER_CACHE: dict[str, tuple[float, object]] = {}
 
 
 def _cache_get(key: str, ttl_seconds: int):
+    # L1: in-process memory.
     item = _WORLD_CUP_PROVIDER_CACHE.get(key)
-    if not item:
-        return None
-    created_at, payload = item
-    if time.time() - created_at >= ttl_seconds:
+    if item:
+        created_at, payload = item
+        if time.time() - created_at < ttl_seconds:
+            return payload
         _WORLD_CUP_PROVIDER_CACHE.pop(key, None)
-        return None
-    return payload
+
+    # L2: database — survives process restarts so we don't re-call the provider.
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.query(models.ProviderCache).filter(models.ProviderCache.key == key).first()
+            if row and (time.time() - (row.created_at or 0) < ttl_seconds):
+                _WORLD_CUP_PROVIDER_CACHE[key] = (row.created_at, row.value)
+                return row.value
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
 
 
 def _cache_set(key: str, payload):
-    _WORLD_CUP_PROVIDER_CACHE[key] = (time.time(), payload)
+    now = time.time()
+    _WORLD_CUP_PROVIDER_CACHE[key] = (now, payload)
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.query(models.ProviderCache).filter(models.ProviderCache.key == key).first()
+            if row:
+                row.value = payload
+                row.created_at = int(now)
+            else:
+                db.add(models.ProviderCache(key=key, value=payload, created_at=int(now)))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
     return payload
 
 
@@ -1751,12 +1781,16 @@ def get_world_cup_match_detail(db: Session, fixture_id: int, force: bool = False
     from fetcher import _get
 
     detail_cache_key = f"world_cup_match_detail:{fixture_id}"
-    cached_item = None if force else _WORLD_CUP_PROVIDER_CACHE.get(detail_cache_key)
-    if cached_item:
-        created_at, cached_detail = cached_item
+    # Finished/upcoming match data doesn't change — cache it for days (incl. in
+    # the DB) so we never re-call the provider. Only live matches refresh fast.
+    FINISHED_TTL = 7 * 24 * 3600
+    cached_detail = None if force else _cache_get(detail_cache_key, FINISHED_TTL)
+    if cached_detail:
         cached_status = ((cached_detail or {}).get("fixture") or {}).get("status_type")
-        ttl = 20 if cached_status == "inprogress" else 10 * 60
-        if time.time() - created_at < ttl:
+        if cached_status != "inprogress":
+            return cached_detail
+        item = _WORLD_CUP_PROVIDER_CACHE.get(detail_cache_key)
+        if item and time.time() - item[0] < 20:
             return cached_detail
 
     synced_match = next(

@@ -78,6 +78,16 @@ class SyncState(Base):
     updated_at = Column(String, nullable=False)
 
 
+class ProviderCache(Base):
+    """Persisted provider responses so they survive restarts and aren't
+    re-fetched (saves API calls). Value is JSON; created_at is a unix epoch."""
+    __tablename__ = "provider_cache"
+
+    key        = Column(String, primary_key=True, index=True)
+    value      = Column(JSON, nullable=False)
+    created_at = Column(Integer, nullable=False)
+
+
 class CompetitionSyncState(Base):
     __tablename__ = "competition_sync_state"
     __table_args__ = (
