@@ -16,6 +16,7 @@ const PlayerDetails = lazy(() => import('./pages/PlayerDetails'))
 const DataControl = lazy(() => import('./pages/DataControl'))
 const SimilarPlayers = lazy(() => import('./pages/SimilarPlayers'))
 const Shortlists = lazy(() => import('./pages/Shortlists'))
+const LineupBuilder = lazy(() => import('./pages/LineupBuilder'))
 const StaticPage = lazy(() => import('./pages/StaticPages'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 
@@ -37,6 +38,7 @@ export default function App() {
                 <Route path="/compare"    element={<ComparePlayers />} />
                 <Route path="/similar/:id" element={<SimilarPlayers />} />
                 <Route path="/shortlists" element={<Shortlists />} />
+                <Route path="/line-builder" element={<LineupBuilder />} />
                 <Route path="/admin-pitchiq" element={<DataControl />} />
                 <Route path="/player/:id" element={<PlayerDetails />} />
                 <Route path="/about" element={<StaticPage page="about" />} />

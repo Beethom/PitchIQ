@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { BarChart2, Bookmark, ClipboardList, HelpCircle, Info, MessageSquare, Trophy, Users, Menu, X } from 'lucide-react'
+import { BarChart2, Bookmark, ClipboardList, HelpCircle, Info, LayoutGrid, MessageSquare, Trophy, Users, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import { useLanguage } from '../../i18n/LanguageProvider'
 import { FR_TRANSLATIONS } from '../../i18n/translations'
@@ -9,6 +9,7 @@ const links = [
   { to: '/world-cup', label: 'World Cup', icon: Trophy },
   { to: '/scouting-board', label: 'Scouting', icon: ClipboardList },
   { to: '/compare', label: 'Compare',   icon: Users },
+  { to: '/line-builder', label: 'Lineup Builder', icon: LayoutGrid },
   { to: '/shortlists', label: 'Shortlists', icon: Bookmark },
   { to: '/about', label: 'About Us', icon: Info },
   { to: '/how-it-works', label: 'How to Use', icon: HelpCircle },
