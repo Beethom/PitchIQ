@@ -15,13 +15,13 @@ import time
 log = logging.getLogger(__name__)
 
 # Minimum seconds between automatic World Cup syncs.
-WORLD_CUP_SYNC_INTERVAL = int(os.getenv("WORLD_CUP_AUTO_SYNC_SECONDS", "600"))
+WORLD_CUP_SYNC_INTERVAL = int(os.getenv("WORLD_CUP_AUTO_SYNC_SECONDS", "900"))
 # Shorter interval while a match is live so leaderboards keep up with play.
 WORLD_CUP_LIVE_SYNC_INTERVAL = int(os.getenv("WORLD_CUP_LIVE_SYNC_SECONDS", "180"))
 
 # General (all-competitions) refresh runs far less often — club/league stats
 # change at most daily, so we don't need to hammer the provider.
-INCREMENTAL_SYNC_INTERVAL = int(os.getenv("INCREMENTAL_AUTO_SYNC_SECONDS", str(3 * 3600)))
+INCREMENTAL_SYNC_INTERVAL = int(os.getenv("INCREMENTAL_AUTO_SYNC_SECONDS", str(12 * 3600)))
 
 # Each "channel" tracks its own throttle/in-flight state so a slow full sync
 # never blocks the fast World Cup refresh and vice versa.

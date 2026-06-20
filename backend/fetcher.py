@@ -1583,7 +1583,10 @@ def sync_recent(
                         if not fixture_id:
                             continue
                         fixture_already_synced = _already_synced_fixture(db, fixture_id)
-                        if fixture_already_synced and league["name"] != "FIFA World Cup":
+                        # Skip anything already synced unless it's a LIVE World Cup
+                        # match (finished matches never change — re-fetching them
+                        # every sync was burning the API quota).
+                        if fixture_already_synced and not is_world_cup_live:
                             continue
 
                         ts = event.get("startTimestamp")

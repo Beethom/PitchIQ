@@ -83,7 +83,7 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    wc_minutes = int(os.getenv("WORLD_CUP_SYNC_MINUTES", "15"))
+    wc_minutes = int(os.getenv("WORLD_CUP_SYNC_MINUTES", "30"))
     _scheduler.add_job(
         _world_cup_sync_job,
         trigger=IntervalTrigger(minutes=wc_minutes),
