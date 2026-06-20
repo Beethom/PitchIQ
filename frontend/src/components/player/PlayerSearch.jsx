@@ -155,7 +155,7 @@ export default function PlayerSearch({ onSelect, placeholder = 'Search players..
         <ul
           ref={dropdownRef}
           style={dropdownStyle ?? undefined}
-          className="fixed z-[100] overflow-y-auto overscroll-contain rounded-lg border border-slate-200 bg-white shadow-xl"
+          className="fixed z-[200] overflow-y-auto overscroll-contain rounded-lg border border-slate-200 bg-white shadow-xl"
         >
           {showRecents && (
             <li className="flex items-center gap-1.5 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
