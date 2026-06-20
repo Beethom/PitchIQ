@@ -18,7 +18,8 @@ function initials(name = '') {
   return String(name).split(/\s+/).filter(Boolean).map((p) => p[0]).join('').slice(0, 2).toUpperCase() || '?'
 }
 
-export async function saveLineupImage(formation, slots, picks) {
+export async function saveLineupImage(formation, slots, picks, opts = {}) {
+  const { name = '', captain = null } = opts
   const canvas = document.createElement('canvas')
   canvas.width = W * SCALE
   canvas.height = H * SCALE
@@ -32,7 +33,7 @@ export async function saveLineupImage(formation, slots, picks) {
   ctx.fillStyle = '#0b1428'; ctx.fillRect(0, 0, W, H)
   txt('PITCHVISION', 48, 56, { size: 30, weight: 900, color: '#38bdf8' })
   txt(formation, W - 48, 60, { size: 30, weight: 900, align: 'right' })
-  txt('MY STARTING XI', 48, 92, { size: 22, weight: 800, color: '#94a3b8' })
+  txt((name || 'MY STARTING XI').toUpperCase(), 48, 92, { size: 22, weight: 800, color: '#94a3b8' })
 
   // pitch
   const px = 60; const py = 150; const pw = W - 120; const ph = H - 230
@@ -70,6 +71,11 @@ export async function saveLineupImage(formation, slots, picks) {
     ctx.restore()
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 3
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke()
+    if (p && captain === s.id) {
+      ctx.fillStyle = '#facc15'
+      ctx.beginPath(); ctx.arc(cx - r + 4, cy - r + 4, 11, 0, Math.PI * 2); ctx.fill()
+      txt('C', cx - r + 4, cy - r + 9, { size: 13, weight: 900, align: 'center', color: '#0f172a' })
+    }
     if (p) {
       const short = p.name.split(' ').slice(-1)[0]
       ctx.font = '800 20px Inter, Arial, sans-serif'
@@ -88,10 +94,11 @@ export async function saveLineupImage(formation, slots, picks) {
   document.body.appendChild(link); link.click(); link.remove()
 }
 
-export function shareLineupToX(formation, slots, picks) {
+export function shareLineupToX(formation, slots, picks, name = '') {
   const ids = slots.map((s) => picks[s.id]?.id || 0).join(',')
   const named = slots.filter((s) => picks[s.id]).map((s) => picks[s.id].name)
-  const text = `My ${formation} XI ⚽\n\n${named.join(', ')}\n\nBuild yours 👇`
+  const title = name ? `${name} (${formation})` : `My ${formation} XI`
+  const text = `${title} ⚽\n\n${named.join(', ')}\n\nBuild yours 👇`
   const v = Date.now().toString(36)
   const shareUrl = `https://www.pitchvision.app/share/xi?f=${encodeURIComponent(formation)}&p=${ids}&v=${v}`
   window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`, '_blank', 'noopener,noreferrer')
