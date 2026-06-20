@@ -100,9 +100,10 @@ def render_leaders_png(label, rows) -> bytes:
     from PIL import Image, ImageDraw, ImageFont
 
     W = 1200
-    top = 230
-    row_h = 86
-    H = top + max(1, len(rows)) * row_h + 70
+    H = 630
+    top = 218
+    row_h = 66
+    rows = rows[:5]
 
     img = Image.new("RGB", (W, H), "#0a1120")
     d = ImageDraw.Draw(img)
@@ -120,25 +121,29 @@ def render_leaders_png(label, rows) -> bytes:
             except TypeError:
                 return ImageFont.load_default()
 
-    # header
-    d.text((56, 48), "PITCHVISION", font=font(34), fill="#38bdf8")
-    d.text((W - 56, 52), "STAT LEADERS", font=font(24), fill="#94a3b8", anchor="ra")
-    d.text((56, 110), label.upper(), font=font(60), fill="#ffffff")
-    d.text((56, 188), "FIFA World Cup 2026", font=font(26), fill="#94a3b8")
-    d.line([(56, 222), (W - 56, 222)], fill="#1e293b", width=2)
+    # Fixed 1200x630 social-card layout for X/Twitter large preview cards.
+    d.rounded_rectangle([34, 32, W - 34, H - 32], radius=28, fill="#0d172a", outline="#1e293b", width=2)
+    d.text((70, 72), "PITCHVISION", font=font(30), fill="#38bdf8")
+    d.text((W - 70, 76), "WORLD CUP STAT LEADERS", font=font(22), fill="#94a3b8", anchor="ra")
+    d.text((70, 132), label.upper(), font=font(54), fill="#ffffff")
+    d.text((70, 178), "FIFA World Cup 2026", font=font(24), fill="#94a3b8")
+    d.line([(70, 202), (W - 70, 202)], fill="#1e293b", width=2)
+
+    if not rows:
+        d.text((W // 2, 350), "No leaderboard data available yet", font=font(34), fill="#94a3b8", anchor="ma")
 
     for i, r in enumerate(rows):
         y = top + i * row_h
         accent = "#facc15" if i < 3 else "#64748b"
         if i == 0:
-            d.rounded_rectangle([44, y - 6, W - 44, y + row_h - 18], radius=16, fill="#0e2235")
-        d.text((70, y + 8), f"{i + 1}", font=font(34), fill=accent, anchor="ma")
-        d.text((118, y + 6), r["name"], font=font(34), fill="#ffffff")
+            d.rounded_rectangle([58, y - 8, W - 58, y + row_h - 8], radius=16, fill="#0e2235")
+        d.text((88, y + 9), f"{i + 1}", font=font(30), fill=accent, anchor="ma")
+        d.text((132, y + 8), r["name"], font=font(30), fill="#ffffff")
         if r.get("team"):
-            d.text((118, y + 48), r["team"], font=font(20, bold=False), fill="#64748b")
-        d.text((W - 64, y + 16), r["value"], font=font(40), fill="#38bdf8", anchor="ra")
+            d.text((132, y + 44), r["team"], font=font(18, bold=False), fill="#64748b")
+        d.text((W - 76, y + 12), r["value"], font=font(38), fill="#38bdf8", anchor="ra")
 
-    d.text((W // 2, H - 34), "pitchvision.app", font=font(24), fill="#475569", anchor="ma")
+    d.text((W // 2, H - 58), "pitchvision.app", font=font(24), fill="#475569", anchor="ma")
 
     buf = BytesIO()
     img.save(buf, format="PNG")
@@ -147,8 +152,11 @@ def render_leaders_png(label, rows) -> bytes:
 
 FORMATIONS = {
     "4-3-3": [4, 3, 3], "4-4-2": [4, 4, 2], "4-2-3-1": [4, 2, 3, 1],
-    "4-3-1-2": [4, 3, 1, 2], "3-5-2": [3, 5, 2], "3-4-3": [3, 4, 3],
-    "5-3-2": [5, 3, 2], "4-5-1": [4, 5, 1], "4-1-4-1": [4, 1, 4, 1],
+    "4-3-1-2": [4, 3, 1, 2], "4-1-2-1-2": [4, 1, 2, 1, 2], "4-4-1-1": [4, 4, 1, 1],
+    "4-2-2-2": [4, 2, 2, 2], "3-5-2": [3, 5, 2], "3-4-3": [3, 4, 3],
+    "3-4-2-1": [3, 4, 2, 1], "3-4-1-2": [3, 4, 1, 2], "3-1-4-2": [3, 1, 4, 2],
+    "5-3-2": [5, 3, 2], "5-4-1": [5, 4, 1], "5-2-3": [5, 2, 3],
+    "4-5-1": [4, 5, 1], "4-1-4-1": [4, 1, 4, 1],
 }
 
 
@@ -231,10 +239,16 @@ def xi_share_page_html(formation, p):
 </body></html>"""
 
 
-def share_page_html(label, tab_key):
-    img = f"{ORIGIN}/api/share/wc-leaders.png?tab={tab_key}"
+def share_page_html(label, tab_key, v=""):
+    from urllib.parse import quote_plus
+
+    safe_tab = quote_plus(str(tab_key))
+    safe_v = quote_plus(str(v)) if v else ""
+    cache_key = f"&v={safe_v}" if safe_v else ""
+    img = f"{ORIGIN}/api/share/wc-leaders.png?tab={safe_tab}{cache_key}"
     title = f"{label} Leaders — FIFA World Cup 2026 | PitchVision"
     desc = f"The {label.lower()} leaders at the FIFA World Cup 2026, live on PitchVision."
+    share_url = f"{ORIGIN}/share/wc-leaders/{safe_tab}?v={safe_v}" if safe_v else f"{ORIGIN}/share/wc-leaders/{safe_tab}"
     target = f"{ORIGIN}/world-cup"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8" />
@@ -245,13 +259,16 @@ def share_page_html(label, tab_key):
 <meta property="og:site_name" content="PitchVision" />
 <meta property="og:title" content="{title}" />
 <meta property="og:description" content="{desc}" />
-<meta property="og:url" content="{target}" />
+<meta property="og:url" content="{share_url}" />
 <meta property="og:image" content="{img}" />
+<meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="{title}" />
 <meta name="twitter:description" content="{desc}" />
 <meta name="twitter:image" content="{img}" />
+<meta name="twitter:image:alt" content="{title}" />
 </head><body>
 <p>Opening <a href="{target}">PitchVision</a>…</p>
 <!-- JS-only redirect: crawlers (which don't run JS) read the card above; humans
