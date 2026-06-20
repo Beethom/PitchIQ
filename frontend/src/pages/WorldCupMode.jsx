@@ -85,7 +85,7 @@ const LEADERBOARD_CATEGORIES = [
     tabs: [
       { key: 'dribbles',         label: 'Dribbles Completed',  fn: (p) => p.stats?.dribbles ?? 0,                   fmt: (v) => `${v}` },
       { key: 'totalDribbles',    label: 'Dribbles Attempted',  fn: (p) => p.stats?._totalDribbles ?? 0,             fmt: (v) => `${v}` },
-      { key: 'dribbleSuccess',   label: 'Dribble Success',     fn: (p) => p.stats?.dribbleSuccess ?? 0,             fmt: (v) => `${Number(v).toFixed(1)}%` },
+      { key: 'dribbleSuccess',   label: 'Dribble Success',     minDribbles: 3, fn: (p) => p.stats?.dribbleSuccess ?? 0, fmt: (v) => `${Number(v).toFixed(1)}%` },
       { key: 'carries',          label: 'Ball Carries',        fn: (p) => p.stats?.carries ?? 0,                    fmt: (v) => `${v}` },
       { key: 'progressiveCarries', label: 'Progressive Carries', fn: (p) => p.stats?.progressiveCarries ?? 0,       fmt: (v) => `${v}` },
       { key: 'possessionLost',   label: 'Possession Lost',     fn: (p) => p.stats?.possessionLost ?? 0,             fmt: (v) => `${v}` },
@@ -436,7 +436,7 @@ export default function WorldCupMode() {
                           onClick={() => shareLeaderboardToX(activeCategory?.label ?? '', activeTab, lbPlayers)}
                           className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
                         >
-                          𝕏 Share to X
+                          Share image
                         </button>
                         <button
                           type="button"
@@ -833,6 +833,7 @@ function rankByTab(players, tabKey, tabs = []) {
     .filter((p) => !tab.keeperOnly || p.position === 'GK')
     .filter((p) => !tab.excludeGk || p.position !== 'GK')
     .filter((p) => (p.stats?.minutesPlayed ?? 0) >= minMins)
+    .filter((p) => !tab.minDribbles || (p.stats?._totalDribbles ?? 0) >= tab.minDribbles)
     .filter((p) => tab.lowerIsBetter || tab.fn(p) > 0)
     .sort((a, b) => {
       const direction = tab.lowerIsBetter ? 1 : -1
