@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Trash2, X, Plus } from 'lucide-react'
+import { Trash2, X, Plus, Download, Share2 } from 'lucide-react'
 import PageContainer from '../components/layout/PageContainer'
 import PlayerAvatar from '../components/player/PlayerAvatar'
 import PlayerSearch from '../components/player/PlayerSearch'
 import CountryFlag from '../components/common/CountryFlag'
 import Seo from '../components/common/Seo'
+import { saveLineupImage, shareLineupToX } from '../utils/saveLineupImage'
 
 // Outfield lines per formation (GK is always added separately).
 const FORMATIONS = {
@@ -42,6 +43,8 @@ export default function LineupBuilder() {
   const [formation, setFormation] = useState('4-3-3')
   const [picks, setPicks] = useState({}) // slotId -> player
   const [activeSlot, setActiveSlot] = useState(null)
+  const [wcOnly, setWcOnly] = useState(false)
+  const [dragId, setDragId] = useState(null)
 
   useEffect(() => {
     try {
@@ -69,6 +72,16 @@ export default function LineupBuilder() {
   }
   const removeSlot = (id) => setPicks((prev) => { const n = { ...prev }; delete n[id]; return n })
   const clearAll = () => setPicks({})
+  const swapSlots = (a, b) => {
+    if (a === b) return
+    setPicks((prev) => {
+      const n = { ...prev }
+      const pa = n[a]; const pb = n[b]
+      if (pb) n[a] = pb; else delete n[a]
+      if (pa) n[b] = pa; else delete n[b]
+      return n
+    })
+  }
 
   return (
     <div className="flex-1 min-w-0 bg-slate-50">
@@ -103,9 +116,21 @@ export default function LineupBuilder() {
               </select>
               <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600">{filled}/11 picked</span>
               <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600">Avg {avgRating}</span>
-              <button type="button" onClick={clearAll} className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm hover:bg-slate-50">
-                <Trash2 size={14} /> Clear
-              </button>
+              <label className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm">
+                <input type="checkbox" checked={wcOnly} onChange={(e) => setWcOnly(e.target.checked)} className="accent-emerald-600" />
+                World Cup only
+              </label>
+              <div className="ml-auto flex gap-2">
+                <button type="button" onClick={() => shareLineupToX(formation, slots, picks)} disabled={filled === 0} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50">
+                  <Share2 size={14} /> Share to X
+                </button>
+                <button type="button" onClick={() => saveLineupImage(formation, slots, picks)} disabled={filled === 0} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50">
+                  <Download size={14} /> Save
+                </button>
+                <button type="button" onClick={clearAll} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm hover:bg-slate-50">
+                  <Trash2 size={14} /> Clear
+                </button>
+              </div>
             </div>
 
             <div className="relative mx-auto aspect-[7/10] max-w-2xl overflow-hidden rounded-2xl border border-emerald-800/30 bg-[linear-gradient(180deg,#3f8f4f,#357a45)] shadow-inner">
@@ -119,11 +144,22 @@ export default function LineupBuilder() {
               {slots.map((slot) => {
                 const player = picks[slot.id]
                 return (
-                  <div key={slot.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${slot.x}%`, top: `${slot.y}%` }}>
+                  <div
+                    key={slot.id}
+                    className="absolute -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                    onDragOver={(e) => { if (dragId != null) e.preventDefault() }}
+                    onDrop={(e) => { e.preventDefault(); if (dragId != null) { swapSlots(dragId, slot.id); setDragId(null) } }}
+                  >
                     {player ? (
-                      <div className="flex flex-col items-center gap-1">
+                      <div
+                        className="flex flex-col items-center gap-1"
+                        draggable
+                        onDragStart={() => setDragId(slot.id)}
+                        onDragEnd={() => setDragId(null)}
+                      >
                         <div className="relative">
-                          <button type="button" onClick={() => setActiveSlot(slot.id)} className="block rounded-full ring-2 ring-white/80 transition hover:scale-105">
+                          <button type="button" onClick={() => setActiveSlot(slot.id)} className="block cursor-grab rounded-full ring-2 ring-white/80 transition hover:scale-105 active:cursor-grabbing">
                             <PlayerAvatar player={player} size="md" />
                           </button>
                           <button type="button" onClick={() => removeSlot(slot.id)} aria-label="Remove" className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow">
@@ -182,8 +218,8 @@ export default function LineupBuilder() {
               <h3 className="text-sm font-black text-slate-950">Add a player</h3>
               <button type="button" onClick={() => setActiveSlot(null)} className="text-slate-400 hover:text-slate-700"><X size={18} /></button>
             </div>
-            <PlayerSearch onSelect={pickPlayer} placeholder="Search any player…" />
-            <p className="mt-2 text-xs text-slate-400">Pick a player to fill this position.</p>
+            <PlayerSearch onSelect={pickPlayer} placeholder={wcOnly ? 'Search World Cup players…' : 'Search any player…'} filter={wcOnly ? (p) => p.league === 'FIFA World Cup' : undefined} />
+            <p className="mt-2 text-xs text-slate-400">{wcOnly ? 'Showing World Cup 2026 players only.' : 'Pick a player to fill this position.'}</p>
           </div>
         </div>
       )}

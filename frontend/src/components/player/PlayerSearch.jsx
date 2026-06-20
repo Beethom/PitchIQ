@@ -9,7 +9,7 @@ import ClubLogo from '../common/ClubLogo'
 import { dedupePlayers } from '../../utils/dedupePlayers'
 import { getRecentlyViewed } from '../../utils/recentlyViewed'
 
-export default function PlayerSearch({ onSelect, placeholder = 'Search players...' }) {
+export default function PlayerSearch({ onSelect, placeholder = 'Search players...', filter }) {
   const [query, setQuery]     = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -80,7 +80,8 @@ export default function PlayerSearch({ onSelect, placeholder = 'Search players..
       try {
         const data = await playerService.search(query, { signal: controller.signal })
         if (requestRef.current !== requestId) return
-        setResults(dedupePlayers(data))
+        const scoped = typeof filter === 'function' ? data.filter(filter) : data
+        setResults(dedupePlayers(scoped))
         setOpen(true)
       } catch (error) {
         if (axios.isCancel(error) || error.code === 'ERR_CANCELED') return

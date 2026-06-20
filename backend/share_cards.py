@@ -145,6 +145,92 @@ def render_leaders_png(label, rows) -> bytes:
     return buf.getvalue()
 
 
+FORMATIONS = {
+    "4-3-3": [4, 3, 3], "4-4-2": [4, 4, 2], "4-2-3-1": [4, 2, 3, 1],
+    "4-3-1-2": [4, 3, 1, 2], "3-5-2": [3, 5, 2], "3-4-3": [3, 4, 3],
+    "5-3-2": [5, 3, 2], "4-5-1": [4, 5, 1], "4-1-4-1": [4, 1, 4, 1],
+}
+
+
+def _xi_slots(formation):
+    lines = FORMATIONS.get(formation, FORMATIONS["4-3-3"])
+    slots = [(50.0, 90.0)]
+    k = len(lines)
+    for li, count in enumerate(lines):
+        y = 74 - li * (62 / (k - 1)) if k > 1 else 44
+        for j in range(count):
+            slots.append((((j + 1) / (count + 1)) * 100, y))
+    return slots
+
+
+def render_xi_png(formation, names) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+    import os
+    W, H = 1080, 1350
+    img = Image.new("RGB", (W, H), "#0b1428")
+    d = ImageDraw.Draw(img)
+    fp = os.path.join(os.path.dirname(__file__), "assets", "fonts", "DejaVuSans.ttf")
+
+    def font(sz):
+        try:
+            return ImageFont.truetype(fp, sz)
+        except Exception:
+            return ImageFont.load_default(sz)
+
+    # header
+    d.text((48, 40), "PITCHVISION", font=font(30), fill="#38bdf8")
+    d.text((W - 48, 44), formation, font=font(30), fill="#ffffff", anchor="ra")
+    d.text((48, 84), "MY STARTING XI", font=font(22), fill="#94a3b8")
+
+    # pitch
+    px, py, pw, ph = 60, 150, W - 120, H - 230
+    d.rounded_rectangle([px, py, px + pw, py + ph], radius=18, fill="#357a45")
+    d.rectangle([px + 16, py + 16, px + pw - 16, py + ph - 16], outline="#ffffff55", width=2)
+    d.line([(px + 16, py + ph / 2), (px + pw - 16, py + ph / 2)], fill="#ffffff55", width=2)
+    d.ellipse([px + pw / 2 - 60, py + ph / 2 - 60, px + pw / 2 + 60, py + ph / 2 + 60], outline="#ffffff55", width=2)
+
+    slots = _xi_slots(formation)
+    for i, (sx, sy) in enumerate(slots):
+        cx = px + 16 + (sx / 100) * (pw - 32)
+        cy = py + 16 + (sy / 100) * (ph - 32)
+        d.ellipse([cx - 22, cy - 22, cx + 22, cy + 22], fill="#0b1428", outline="#ffffff", width=3)
+        name = names[i] if i < len(names) and names[i] else "—"
+        # last name only for space
+        short = name.split()[-1] if name and name != "—" else "+"
+        d.text((cx, cy + 30), short, font=font(20), fill="#ffffff", anchor="ma")
+
+    d.text((W // 2, H - 36), "Build yours at pitchvision.app", font=font(22), fill="#64748b", anchor="ma")
+    from io import BytesIO
+    buf = BytesIO(); img.save(buf, format="PNG"); return buf.getvalue()
+
+
+def xi_share_page_html(formation, p):
+    img = f"{ORIGIN}/api/share/xi.png?f={formation}&p={p}"
+    title = f"My {formation} Starting XI | PitchVision"
+    desc = f"Check out my {formation} starting XI, built on PitchVision."
+    target = f"{ORIGIN}/line-builder"
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+<meta name="description" content="{desc}" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="PitchVision" />
+<meta property="og:title" content="{title}" />
+<meta property="og:description" content="{desc}" />
+<meta property="og:url" content="{target}" />
+<meta property="og:image" content="{img}" />
+<meta property="og:image:width" content="1080" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="{title}" />
+<meta name="twitter:description" content="{desc}" />
+<meta name="twitter:image" content="{img}" />
+</head><body>
+<p>Opening <a href="{target}">PitchVision</a>…</p>
+<script>window.location.replace({target!r})</script>
+</body></html>"""
+
+
 def share_page_html(label, tab_key):
     img = f"{ORIGIN}/api/share/wc-leaders.png?tab={tab_key}"
     title = f"{label} Leaders — FIFA World Cup 2026 | PitchVision"

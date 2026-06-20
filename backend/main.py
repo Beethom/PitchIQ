@@ -135,6 +135,32 @@ def share_leaders_page(tab: str = "goals"):
     return HTMLResponse(share_cards.share_page_html(label, tab))
 
 
+@app.get("/api/share/xi.png", include_in_schema=False)
+def share_xi_png(f: str = "4-3-3", p: str = ""):
+    from fastapi.responses import Response
+    from database import SessionLocal
+    import models, share_cards
+
+    ids = [int(x) for x in p.split(",") if x.strip().isdigit()]
+    names = []
+    if ids:
+        db = SessionLocal()
+        try:
+            by_id = {pl.id: pl.name for pl in db.query(models.Player).filter(models.Player.id.in_(ids)).all()}
+        finally:
+            db.close()
+        names = [by_id.get(i, "") for i in ids]
+    png = share_cards.render_xi_png(f, names)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=600"})
+
+
+@app.get("/share/xi", include_in_schema=False)
+def share_xi_page(f: str = "4-3-3", p: str = ""):
+    from fastapi.responses import HTMLResponse
+    import share_cards
+    return HTMLResponse(share_cards.xi_share_page_html(f, p))
+
+
 # Serve React frontend — must come after all /api routes
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):
