@@ -19,7 +19,9 @@ function initials(name = '') {
 }
 
 export async function saveLineupImage(formation, slots, picks, opts = {}) {
-  const { name = '', captain = null } = opts
+  const { name = '', captain = null, theme = {} } = opts
+  const pitchColor = theme.solid || '#357a45'
+  const ringColor = theme.ring || '#ffffff'
   const canvas = document.createElement('canvas')
   canvas.width = W * SCALE
   canvas.height = H * SCALE
@@ -37,7 +39,7 @@ export async function saveLineupImage(formation, slots, picks, opts = {}) {
 
   // pitch
   const px = 60; const py = 150; const pw = W - 120; const ph = H - 230
-  ctx.fillStyle = '#357a45'
+  ctx.fillStyle = pitchColor
   ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 18); ctx.fill()
   ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2
   ctx.strokeRect(px + 16, py + 16, pw - 32, ph - 32)
@@ -69,7 +71,7 @@ export async function saveLineupImage(formation, slots, picks, opts = {}) {
       txt('+', cx, cy + 9, { size: 26, weight: 900, align: 'center', color: '#94a3b8' })
     }
     ctx.restore()
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3
+    ctx.strokeStyle = ringColor; ctx.lineWidth = 3
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke()
     if (p && captain === s.id) {
       ctx.fillStyle = '#facc15'

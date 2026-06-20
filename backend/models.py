@@ -78,6 +78,15 @@ class SyncState(Base):
     updated_at = Column(String, nullable=False)
 
 
+class SharedLineup(Base):
+    """A user-saved starting XI, shareable via a public link."""
+    __tablename__ = "shared_lineup"
+
+    id         = Column(String, primary_key=True, index=True)
+    data       = Column(JSON, nullable=False)
+    created_at = Column(Integer, nullable=False)
+
+
 class ProviderCache(Base):
     """Persisted provider responses so they survive restarts and aren't
     re-fetched (saves API calls). Value is JSON; created_at is a unix epoch."""

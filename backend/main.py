@@ -10,7 +10,7 @@ load_dotenv()
 
 import models
 from database import ensure_schema
-from routers import players, compare, admin, teams, media
+from routers import players, compare, admin, teams, media, lineups
 from scheduler import start_scheduler, stop_scheduler
 
 ensure_schema(models.Base)
@@ -45,6 +45,7 @@ app.include_router(teams.router, prefix="/api")
 app.include_router(compare.router, prefix="/api")
 app.include_router(admin.router,   prefix="/api")
 app.include_router(media.router,   prefix="/api")
+app.include_router(lineups.router, prefix="/api")
 
 # Remove 307 redirects — FastAPI adds trailing-slash redirects by default
 app.router.redirect_slashes = False
