@@ -1583,7 +1583,9 @@ def _fixture_positional_data(source_player_id: int, fixture_id: int) -> dict:
     from fetcher import _get
 
     cache_key = f"fixture_positional:{fixture_id}:{source_player_id}"
-    cached = _cache_get(cache_key, 10 * 60)
+    # Heatmap/shots/etc. are immutable once a match ends, so cache for hours
+    # (persisted in the DB) — repeat match-card views cost no API calls.
+    cached = _cache_get(cache_key, 6 * 3600)
     if cached is not None:
         return cached
 
