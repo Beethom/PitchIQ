@@ -19,6 +19,18 @@ import PageContainer from '../components/layout/PageContainer'
 
 const CONTACT_CATEGORIES = ['Data issue', 'Support', 'Demo', 'Partnership', 'Feature request']
 const DEMO_ROLES = ['Club staff', 'Scout', 'Analyst', 'Agent', 'Coach', 'Media', 'Other']
+const CONTACT_EMAIL = 'beethovenmarhone@gmail.com'
+
+function openMailto(subjectPrefix, form) {
+  const data = new FormData(form)
+  const fields = []
+  for (const [key, value] of data.entries()) {
+    if (String(value).trim()) fields.push(`${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`)
+  }
+  const subject = `${subjectPrefix}${data.get('category') ? ` — ${data.get('category')}` : ''}`
+  const body = fields.join('\n')
+  window.location.href = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
 
 const pages = {
   about: {
@@ -290,8 +302,8 @@ function ContactForm() {
       title="Send a message"
       description="Choose a category so the team knows whether this is support, data, demo, partnership, or product feedback."
       sent={sent}
-      sentText="Message prepared. The team can connect this form to email or CRM next."
-      onSubmit={() => setSent(true)}
+      sentText="Opening your email app to send this message to the PitchVision team."
+      onSubmit={(form) => { openMailto('PitchVision contact', form); setSent(true) }}
     >
       <Input label="Name" name="name" required />
       <Input label="Email" name="email" type="email" required />
@@ -310,8 +322,8 @@ function DemoForm() {
       title="Request access"
       description="Share enough context for a useful demo: role, organization, competitions, and what you want to evaluate."
       sent={sent}
-      sentText="Demo request prepared. The team can connect this form to email or CRM next."
-      onSubmit={() => setSent(true)}
+      sentText="Opening your email app to send this demo request to the PitchVision team."
+      onSubmit={(form) => { openMailto('PitchVision demo request', form); setSent(true) }}
     >
       <Input label="Name" name="name" required />
       <Input label="Email" name="email" type="email" required />
@@ -333,7 +345,7 @@ function FormShell({ title, description, sent, sentText, onSubmit, children }) {
         className="grid gap-4 lg:grid-cols-2"
         onSubmit={(event) => {
           event.preventDefault()
-          onSubmit()
+          onSubmit(event.currentTarget)
         }}
       >
         {children}
