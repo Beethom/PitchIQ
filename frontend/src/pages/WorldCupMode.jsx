@@ -185,6 +185,8 @@ export default function WorldCupMode() {
   const lbSourcePlayers = activeCategory?.key === 'goalkeeping' ? goalkeepers : posFilteredPlayers
   const lbPlayers = useMemo(() => rankByTab(lbSourcePlayers, lbTab, leaderboardTabs), [lbSourcePlayers, lbTab, leaderboardTabs])
   const inForm    = useMemo(() => rankInForm(posFilteredPlayers, players), [posFilteredPlayers, players])
+  const inFormTitle = IN_FORM_TITLES[posFilter] ?? 'In-Form Players'
+  const inFormTab = useMemo(() => ({ ...IN_FORM_TAB, label: inFormTitle }), [inFormTitle])
   const goalkeeperLeaders = useMemo(() => rankGoalkeepers(goalkeepers), [goalkeepers])
 
   // Track whether any World Cup match is currently live, so we can poll
@@ -381,7 +383,7 @@ export default function WorldCupMode() {
               <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-black text-slate-950">Most In-Form</h2>
+                    <h2 className="text-xl font-black text-slate-950">{inFormTitle}</h2>
                     <p className="mt-1 text-sm text-slate-500">
                       All-around tournament impact — output, creation, dribbling, rating, ball security.
                     </p>
@@ -391,7 +393,7 @@ export default function WorldCupMode() {
                       <>
                         <button
                           type="button"
-                          onClick={() => shareLeaderboardToX('Form', IN_FORM_TAB, inForm)}
+                          onClick={() => shareLeaderboardToX('Form', inFormTab, inForm)}
                           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
                         >
                           <Share2 size={15} />
@@ -399,7 +401,7 @@ export default function WorldCupMode() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => postLeaderboardToX('Form', IN_FORM_TAB, inForm)}
+                          onClick={() => postLeaderboardToX('Form', inFormTab, inForm)}
                           title="Post to X"
                           className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
                         >
@@ -817,9 +819,20 @@ function buildWorldCupData(players, goalTotal = null) {
 // image/caption builder (it expects { key, label, fn, fmt }).
 const IN_FORM_TAB = {
   key: 'inForm',
-  label: 'Most In-Form',
+  label: 'In-Form Players',
   fn: (p) => Math.round(p.inFormScore ?? 0),
   fmt: (v) => `${v}`,
+}
+
+// Position-specific in-form titles (used in the header and the share card).
+const IN_FORM_TITLES = {
+  ALL: 'In-Form Players',
+  GK:  'In-Form Goalkeepers',
+  CB:  'In-Form Center Backs',
+  FB:  'In-Form Full Backs',
+  MID: 'In-Form Midfielders',
+  WNG: 'In-Form Wingers',
+  ST:  'In-Form Strikers',
 }
 
 /* ════════════════════════════════════════════════════════════════════════

@@ -33,7 +33,8 @@ export function buildLeaderboardCaption(categoryLabel, tab, players) {
     const pos = p.position ? ` (${p.position})` : ''
     return `${medal} ${flagEmoji(p.flag_code)} ${p.name}${pos} — ${tab.fmt(tab.fn(p))}`
   })
-  return `📊 ${tab.label} leaders — #FIFAWorldCup\n\n${lines.join('\n')}\n\nvia pitchvision.app`
+  const heading = tab.label.startsWith('In-Form') ? tab.label : `${tab.label} leaders`
+  return `📊 ${heading} — #FIFAWorldCup\n\n${lines.join('\n')}\n\nvia pitchvision.app`
 }
 
 export function shareLeaderboardToX(categoryLabel, tab, players) {
