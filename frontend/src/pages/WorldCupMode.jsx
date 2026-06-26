@@ -26,7 +26,7 @@ const OFFICIAL_FILTERS = {
 }
 
 const POS_GROUPS = {
-  ALL: null,
+  ALL: ['CB', 'LB', 'RB', 'CDM', 'CM', 'CAM', 'LW', 'RW', 'ST'],  // outfield — keepers have their own section
   GK:  ['GK'],
   CB:  ['CB'],
   FB:  ['LB', 'RB'],

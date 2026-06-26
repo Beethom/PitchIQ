@@ -19,6 +19,7 @@ function rowsFor(players, tab, limit = 10) {
     name: p.name,
     flag: flagEmoji(p.flag_code),
     club: p.club,
+    pos: p.position,
     value: tab.fmt(tab.fn(p)),
   }))
 }
@@ -29,7 +30,8 @@ export function buildLeaderboardCaption(categoryLabel, tab, players) {
   const top = players.slice(0, 5)
   const lines = top.map((p, i) => {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`
-    return `${medal} ${flagEmoji(p.flag_code)} ${p.name} — ${tab.fmt(tab.fn(p))}`
+    const pos = p.position ? ` (${p.position})` : ''
+    return `${medal} ${flagEmoji(p.flag_code)} ${p.name}${pos} — ${tab.fmt(tab.fn(p))}`
   })
   return `📊 ${tab.label} leaders — #FIFAWorldCup\n\n${lines.join('\n')}\n\nvia pitchvision.app`
 }
@@ -92,7 +94,8 @@ export function createLeaderboardCanvas(categoryLabel, tab, players) {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`
     txt(ctx, medal, P + 6, y + 44, { size: 30, weight: 900, color: i < 3 ? '#facc15' : '#64748b', align: 'center' })
     txt(ctx, `${r.flag}  ${r.name}`, P + 56, y + 44, { size: 30, weight: 800, color: '#ffffff' })
-    if (r.club) txt(ctx, r.club, P + 56, y + 70, { size: 18, weight: 600, color: '#64748b' })
+    const sub = [r.pos, r.club].filter(Boolean).join(' · ')
+    if (sub) txt(ctx, sub, P + 56, y + 70, { size: 18, weight: 600, color: '#64748b' })
     txt(ctx, r.value, W - P, y + 50, { size: 34, weight: 900, color: '#38bdf8', align: 'right' })
   })
 
