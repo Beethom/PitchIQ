@@ -11,6 +11,7 @@ const TAB_EMOJI = {
   blocks: '🧱', duelsWon: '⚔️', aerialDuelsWon: '🛩️', fouls: '🚫', yellowCards: '🟨', redCards: '🟥',
   distanceCovered: '🔋', sprints: '🏃', topSpeed: '⚡️', saves: '🧤', savesP90: '🧤', savePct: '🧤',
   cleanSheets: '🧱', leastConceded: '🚪', mostConceded: '🚪', shotsFaced: '🎯', goalsPrevented: '🛑',
+  inForm: '🔥',
 }
 
 function rowsFor(players, tab, limit = 10) {
@@ -35,13 +36,7 @@ export function buildLeaderboardCaption(categoryLabel, tab, players) {
 
 export function shareLeaderboardToX(categoryLabel, tab, players) {
   const text = buildLeaderboardCaption(categoryLabel, tab, players)
-  // Share a URL whose OG/Twitter tags render the leaderboard image as a card;
-  // clicking it redirects into the app. A unique `v` token per share guarantees
-  // X scrapes a fresh URL (never a previously-cached card).
-  const v = Date.now().toString(36)
-  const shareUrl = `https://www.pitchvision.app/share/wc-leaders?tab=${encodeURIComponent(tab.key)}&v=${v}`
-  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`
-  window.open(url, '_blank', 'noopener,noreferrer')
+  return shareLeaderboardImage(categoryLabel, tab, players, text)
 }
 
 // ---- Branded leaderboard image ----
@@ -103,6 +98,49 @@ export function createLeaderboardCanvas(categoryLabel, tab, players) {
 
   txt(ctx, 'pitchvision.app', W / 2, H - 30, { size: 22, weight: 800, color: '#475569', align: 'center' })
   return canvas
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/png')
+  })
+}
+
+export async function shareLeaderboardImage(categoryLabel, tab, players, text = buildLeaderboardCaption(categoryLabel, tab, players)) {
+  const canvas = createLeaderboardCanvas(categoryLabel, tab, players)
+  const blob = await canvasToBlob(canvas)
+  const filename = `pitchvision-${tab.key}-leaders.png`
+
+  if (blob) {
+    const file = new File([blob], filename, { type: 'image/png' })
+    const shareData = {
+      title: `${tab.label} leaders`,
+      text,
+      files: [file],
+    }
+
+    if (navigator.canShare?.(shareData) && navigator.share) {
+      try {
+        await navigator.share(shareData)
+        return
+      } catch (error) {
+        if (error?.name === 'AbortError') return
+      }
+    }
+  }
+
+  saveLeaderboardImage(categoryLabel, tab, players)
+  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+// Always open the X (Twitter) compose window with the caption prefilled, and
+// download the image card so it can be attached. Unlike shareLeaderboardToX
+// (which prefers the native share sheet), this is a dedicated "Post to X".
+export function postLeaderboardToX(categoryLabel, tab, players, text = buildLeaderboardCaption(categoryLabel, tab, players)) {
+  saveLeaderboardImage(categoryLabel, tab, players)
+  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 export function saveLeaderboardImage(categoryLabel, tab, players) {

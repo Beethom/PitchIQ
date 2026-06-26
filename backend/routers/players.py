@@ -91,6 +91,11 @@ def world_cup_fixtures(
     return crud.get_world_cup_fixtures(limit=limit)
 
 
+@router.get("/world-cup/goal-total")
+def world_cup_goal_total():
+    return crud.get_world_cup_goal_total()
+
+
 @router.get("/world-cup/matches/{fixture_id}", response_model=schemas.WorldCupMatchDetail)
 def world_cup_match_detail(
     fixture_id: int,

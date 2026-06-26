@@ -196,7 +196,9 @@ function WorldCupPulse() {
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.12em] ${
                   live ? 'bg-red-500 text-white' : done ? 'bg-white/10 text-slate-300' : 'bg-sky-500/20 text-sky-200'
                 }`}>
-                  {live ? (f.minute ? `${f.minute}'` : 'LIVE') : done ? 'FT' : formatKickoffShort(f)}
+                  {live
+                    ? (/half.?time/i.test(f.status || '') ? 'HT' : f.minute ? `${f.minute}'` : 'LIVE')
+                    : done ? 'FT' : formatKickoffShort(f)}
                 </span>
               </Link>
             )
@@ -327,7 +329,7 @@ export default function Dashboard({ mode = 'live' }) {
     () => players.filter((player) =>
       (player.stats.starts ?? player.stats.appearances ?? 0) >= minApps
       && (player.stats.minutesPlayed ?? 0) >= minMinutes
-      && player.age <= maxAge
+      && (maxAge >= 40 || (player.age || 99) <= maxAge)
       && (!selectedPositionGroup?.positions.length || selectedPositionGroup.positions.includes(player.position)),
     ),
     [players, minApps, minMinutes, maxAge, selectedPositionGroup],

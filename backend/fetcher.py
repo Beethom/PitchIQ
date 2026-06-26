@@ -351,6 +351,27 @@ def _age_from_dob(dob_str: Optional[str]) -> int:
         return 0
 
 
+def _age_from_timestamp(ts) -> int:
+    """Age from a Unix birth timestamp (the lineup feed exposes
+    `dateOfBirthTimestamp`, not the ISO `dateOfBirth` the stats feed uses)."""
+    if not ts:
+        return 0
+    try:
+        dob = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        today = datetime.now(timezone.utc)
+        return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    except Exception:
+        return 0
+
+
+def _player_age(player_info: dict) -> int:
+    """Resolve a player's age from whichever birth-date field is present."""
+    return (
+        _age_from_dob(player_info.get("dateOfBirth"))
+        or _age_from_timestamp(player_info.get("dateOfBirthTimestamp"))
+    )
+
+
 def _flag_code(country: Optional[dict]) -> Optional[str]:
     if not country:
         return None
@@ -397,7 +418,7 @@ def _merge_roster_player_info(player_info: dict, team_info: dict) -> dict:
     if not roster_info:
         return player_info
     merged = dict(player_info)
-    for key in ("position", "positionsDetailed", "dateOfBirth", "country", "firstName", "lastName", "shortName"):
+    for key in ("position", "positionsDetailed", "dateOfBirth", "dateOfBirthTimestamp", "country", "firstName", "lastName", "shortName"):
         if roster_info.get(key) not in (None, "", []):
             merged[key] = roster_info[key]
     return merged
@@ -824,7 +845,6 @@ def _build_player_payload(
     player_id = _safe_int(player_info.get("id"))
     team_id = _safe_int(team_info.get("id"))
     country = player_info.get("country") or {}
-    dob = player_info.get("dateOfBirth") or ""
     position_raw = player_info.get("position") or ""
     positions_detailed = player_info.get("positionsDetailed") or []
 
@@ -836,7 +856,7 @@ def _build_player_payload(
         "nationality":    country.get("name") or "",
         "club":           (team_info.get("name") or "").strip(),
         "league":         league["name"],
-        "age":            _age_from_dob(dob),
+        "age":            _player_age(player_info),
         "season":         league.get("season_label", SEASON_LABEL),
         "stats":          stats,
         "form":           [],
@@ -860,6 +880,10 @@ def _upsert_player(db: Session, payload: dict) -> models.Player:
     )
     if existing:
         for k, v in payload.items():
+            # Never overwrite a known age with a missing one (0) — a later
+            # lineup-only sync shouldn't wipe an age we already resolved.
+            if k == "age" and not v and existing.age:
+                continue
             setattr(existing, k, v)
         return existing
     player = models.Player(**payload)
@@ -1672,7 +1696,11 @@ def sync_recent(
                                 players_touched.add(player_id)
                                 league_players_touched.add(player_id)
 
-                        if not dry_run:
+                        # Only lock a fixture as "synced" once it is actually
+                        # finished. A match synced while live is left unmarked so
+                        # it gets one more sync after the final whistle, picking
+                        # up late goals/stats instead of freezing mid-game.
+                        if not dry_run and status_type in COMPLETED_STATUS_TYPES:
                             _touch_synced_fixture(db, fixture_id, league, fixture_date)
                         if not fixture_already_synced:
                             fixtures_synced += 1

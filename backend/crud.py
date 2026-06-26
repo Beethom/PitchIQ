@@ -1220,6 +1220,62 @@ def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
     return _cache_set(cache_key, result)
 
 
+def get_world_cup_goal_total() -> dict:
+    """Total goals scored in the tournament from match scorelines.
+
+    Summed from final/live scores (which include own goals, unlike a sum of
+    individual player goals) across every finished and in-progress fixture.
+    Pulls the recent-results pages directly so it isn't limited by the
+    fixture-list truncation, and caches briefly.
+    """
+    from fetcher import _get
+
+    cache_key = "world_cup_goal_total"
+    cached = _cache_get(cache_key, 60)
+    if cached is not None:
+        return cached
+
+    events: dict[int, dict] = {}
+    failed = False
+    # `last` pages carry every finished match; `next/0` catches kickoffs that
+    # have just gone live.
+    for endpoint, pages in (("last", 6), ("next", 1)):
+        for page_idx in range(pages):
+            try:
+                data = _get(f"/api/v1/unique-tournament/16/season/58210/events/{endpoint}/{page_idx}")
+            except Exception:
+                failed = True
+                break
+            evs = data.get("events", [])
+            if not evs:
+                break
+            for ev in evs:
+                eid = ev.get("id")
+                if eid:
+                    events[eid] = ev
+
+    if not events and failed:
+        stale = _WORLD_CUP_PROVIDER_CACHE.get(cache_key)
+        return stale[1] if stale else {"total": None, "finished": 0, "live": 0}
+
+    total = finished = live = 0
+    for ev in events.values():
+        stype = (ev.get("status") or {}).get("type")
+        if stype not in ("finished", "inprogress"):
+            continue
+        h = (ev.get("homeScore") or {}).get("current")
+        a = (ev.get("awayScore") or {}).get("current")
+        if isinstance(h, int) and isinstance(a, int):
+            total += h + a
+            if stype == "finished":
+                finished += 1
+            else:
+                live += 1
+
+    result = {"total": total, "finished": finished, "live": live}
+    return _cache_set(cache_key, result)
+
+
 def _world_cup_team_payload(team: dict, score: Optional[dict]) -> dict:
     from fetcher import _flag_code
 
@@ -1230,6 +1286,41 @@ def _world_cup_team_payload(team: dict, score: Optional[dict]) -> dict:
         "flag_code": _flag_code(team.get("country") or {}),
         "score": (score or {}).get("current"),
     }
+
+
+def _live_match_minute(status: dict, time_data: dict) -> Optional[int]:
+    """Current match minute for a live fixture.
+
+    The provider gives the epoch when the current period kicked off
+    (`currentPeriodStartTimestamp`), not an elapsed minute — so we derive the
+    minute from time-since-kickoff plus the base offset for the period.
+    Returns None when not live or paused (e.g. half-time) so the UI can show a
+    label instead of a number.
+    """
+    if (status.get("type") or "") != "inprogress":
+        return None
+    desc = (status.get("description") or "").lower()
+    if "half" in desc and "time" in desc:  # "Halftime" / "Half-time"
+        return None
+    start = time_data.get("currentPeriodStartTimestamp")
+    if not start:
+        return None
+    if "penalt" in desc:
+        return None
+    # Base minute offset for the period in play.
+    if "2nd extra" in desc or "second extra" in desc:
+        base = 105
+    elif "extra" in desc:
+        base = 90
+    elif "2nd half" in desc or "second half" in desc:
+        base = 45
+    else:
+        base = 0
+    import time as _time
+    elapsed = int((_time.time() - start) // 60)
+    if elapsed < 0:
+        elapsed = 0
+    return base + elapsed + 1
 
 
 def _world_cup_event_payload(event: dict) -> Optional[dict]:
@@ -1247,7 +1338,7 @@ def _world_cup_event_payload(event: dict) -> Optional[dict]:
         "group": group,
         "status": status.get("description") or status.get("type") or "Scheduled",
         "status_type": status.get("type") or "notstarted",
-        "minute": time_data.get("currentPeriodStartTimestamp"),
+        "minute": _live_match_minute(status, time_data),
         "current_period_start_timestamp": time_data.get("currentPeriodStartTimestamp"),
         "current_minute": time_data.get("minute"),
         "home": _world_cup_team_payload(event.get("homeTeam") or {}, event.get("homeScore")),
@@ -1956,7 +2047,9 @@ def get_players(
         season_values = _season_filter_values(season)
         q = q.filter(models.Player.season.in_(season_values))
     if max_age is not None:
-        q = q.filter(models.Player.age <= max_age)
+        # age 0 means "unknown" — exclude from age-capped results rather than
+        # treating an over-age player as a youngster.
+        q = q.filter(models.Player.age > 0, models.Player.age <= max_age)
 
     rows = q.all()
 

@@ -278,6 +278,58 @@ def scheduler_info():
     return {"status": "running", "jobs": jobs}
 
 
+@router.get("/api-football/status", tags=["admin"])
+def api_football_status():
+    if not os.getenv("APISPORTS_KEY") and not os.getenv("API_FOOTBALL_KEY"):
+        raise HTTPException(
+            status_code=400,
+            detail="APISPORTS_KEY is not set. Add it to backend/.env and restart the server.",
+        )
+
+    from api_football import status
+
+    return status()
+
+
+@router.get("/api-football/live", tags=["admin"])
+def api_football_live():
+    if not os.getenv("APISPORTS_KEY") and not os.getenv("API_FOOTBALL_KEY"):
+        raise HTTPException(
+            status_code=400,
+            detail="APISPORTS_KEY is not set. Add it to backend/.env and restart the server.",
+        )
+
+    from api_football import live_fixtures
+
+    return live_fixtures()
+
+
+@router.get("/api-football/fixtures/{fixture_id}", tags=["admin"])
+def api_football_fixture(fixture_id: int):
+    if not os.getenv("APISPORTS_KEY") and not os.getenv("API_FOOTBALL_KEY"):
+        raise HTTPException(
+            status_code=400,
+            detail="APISPORTS_KEY is not set. Add it to backend/.env and restart the server.",
+        )
+
+    from api_football import fixture_detail
+
+    return fixture_detail(fixture_id)
+
+
+@router.get("/api-football/fixtures/{fixture_id}/players", tags=["admin"])
+def api_football_fixture_players(fixture_id: int):
+    if not os.getenv("APISPORTS_KEY") and not os.getenv("API_FOOTBALL_KEY"):
+        raise HTTPException(
+            status_code=400,
+            detail="APISPORTS_KEY is not set. Add it to backend/.env and restart the server.",
+        )
+
+    from api_football import fixture_players
+
+    return fixture_players(fixture_id)
+
+
 @router.get("/coverage", tags=["admin"])
 def coverage_inventory():
     db = SessionLocal()

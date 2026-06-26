@@ -27,6 +27,15 @@ def _pct(v):
     return f"{float(v):.1f}%"
 
 
+def _f1(v):
+    return f"{float(v):.1f}"
+
+
+def _per90(stats, field):
+    mins = stats.get("minutesPlayed", 0) or 0
+    return ((stats.get(field, 0) or 0) / mins) * 90 if mins > 0 else 0
+
+
 TABS = {
     "goals": ("Goals", _num("goals"), _int_fmt),
     "assists": ("Assists", _num("assists"), _int_fmt),
@@ -43,6 +52,7 @@ TABS = {
     "bigChancesMissed": ("Big Chances Missed", _num("bigChancesMissed"), _int_fmt),
     "totalPasses": ("Passes Attempted", _num("totalPasses"), _int_fmt),
     "accuratePasses": ("Successful Passes", _num("_accuratePasses"), _int_fmt),
+    "accuratePassesP90": ("Passes Completed /90", lambda s: _per90(s, "_accuratePasses"), _f1),
     "passAccuracy": ("Pass Accuracy", _num("passAccuracy"), _pct),
     "keyPasses": ("Key Passes", _num("keyPasses"), _int_fmt),
     "xA": ("Expected Assists", _num("xA"), _f2),
@@ -51,6 +61,7 @@ TABS = {
     "crosses": ("Crosses", _num("crosses"), _int_fmt),
     "accurateCrosses": ("Accurate Crosses", _num("accurateCrosses"), _int_fmt),
     "dribbles": ("Dribbles Completed", _num("dribbles"), _int_fmt),
+    "dribblesP90": ("Dribbles Completed /90", lambda s: _per90(s, "dribbles"), _f1),
     "totalDribbles": ("Dribbles Attempted", _num("_totalDribbles"), _int_fmt),
     "dribbleSuccess": ("Dribble Success", _num("dribbleSuccess"), _pct),
     "carries": ("Ball Carries", _num("carries"), _int_fmt),
@@ -79,12 +90,31 @@ TABS = {
 }
 
 
+# Percentage leaderboards require minimum volume to qualify, so a player on
+# 100% from one action can't top the rate-based boards.
+# tab key -> (attempt stat field, minimum attempts, minimum minutes)
+MIN_ATTEMPTS = {
+    "dribbleSuccess": ("_totalDribbles", 6, 100),     # 6 attempted dribbles, 100 min
+    "passAccuracy": ("_accuratePasses", 40, 180),     # 40 completed passes, 180 min
+    "accuratePassesP90": ("_accuratePasses", 0, 180),  # per-90 needs a real sample
+    "dribblesP90": ("dribbles", 0, 100),
+}
+
+
 def rank_players(players, tab_key, limit=10):
     spec = TABS.get(tab_key)
     if not spec:
         return None, None, None
     label, getter, fmt = spec
     rows = [p for p in players if (getter(p.stats or {}) or 0) > 0]
+    gate = MIN_ATTEMPTS.get(tab_key)
+    if gate:
+        field, minimum, min_minutes = gate
+        rows = [
+            p for p in rows
+            if ((p.stats or {}).get(field, 0) or 0) >= minimum
+            and ((p.stats or {}).get("minutesPlayed", 0) or 0) >= min_minutes
+        ]
     rows.sort(key=lambda p: getter(p.stats or {}) or 0, reverse=True)
     out = []
     for p in rows[:limit]:

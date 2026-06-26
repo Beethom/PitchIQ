@@ -109,6 +109,13 @@ export const playerService = {
     })
   },
 
+  async getWorldCupGoalTotal(options = {}) {
+    return cachedGet('worldCupGoalTotal', '/players/world-cup/goal-total', {}, {
+      ttlMs: 60 * 1000,
+      force: options.force,
+    })
+  },
+
   async getWorldCupFixtures(limit = 24, options = {}) {
     return cachedGet('worldCupFixtures', '/players/world-cup/fixtures', { limit }, {
       ttlMs: 60 * 1000,
