@@ -127,6 +127,8 @@ export const FR_TRANSLATIONS = {
   'Finish': 'Finition',
   'Passes Completed /90': 'Passes réussies /90',
   'Dribbles Completed /90': 'Dribbles réussis /90',
+  'In Form': 'En forme',
+  'In-Form Score': 'Score de forme',
   'In-Form Players': 'Joueurs en forme',
   'In-Form Goalkeepers': 'Gardiens en forme',
   'In-Form Center Backs': 'Défenseurs centraux en forme',

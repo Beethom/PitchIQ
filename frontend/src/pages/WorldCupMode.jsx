@@ -42,6 +42,13 @@ const p90 = (val, mins) => mins > 0 ? Math.round((val / mins) * 90 * 10) / 10 : 
 
 const LEADERBOARD_CATEGORIES = [
   {
+    key: 'inform',
+    label: 'In Form',
+    tabs: [
+      { key: 'inForm', label: 'In-Form Score', fn: (p) => Math.round(p.inFormScore ?? 0), fmt: (v) => `${v}` },
+    ],
+  },
+  {
     key: 'output',
     label: 'Output',
     tabs: [
@@ -182,9 +189,18 @@ export default function WorldCupMode() {
   useEffect(() => {
     if (!leaderboardTabs.some((tab) => tab.key === lbTab)) setLbTab(leaderboardTabs[0]?.key ?? 'goals')
   }, [leaderboardTabs, lbTab])
-  const lbSourcePlayers = activeCategory?.key === 'goalkeeping' ? goalkeepers : posFilteredPlayers
+  // In-Form panel respects the position/U23 controls (its own filters).
+  const scoredInForm = useMemo(() => scoreInFormPool(posFilteredPlayers, players), [posFilteredPlayers, players])
+  const inForm = useMemo(() => scoredInForm.slice().sort((a, b) => b.inFormScore - a.inFormScore).slice(0, 8), [scoredInForm])
+
+  // Tournament Leaders are tournament-wide — NOT affected by the position/U23
+  // filters (those belong to the In-Form section only).
+  const allGoalkeepers = useMemo(() => players.filter((p) => p.position === 'GK'), [players])
+  const tournamentInForm = useMemo(() => scoreInFormPool(players, players), [players])
+  const lbSourcePlayers = activeCategory?.key === 'goalkeeping' ? allGoalkeepers
+    : activeCategory?.key === 'inform' ? tournamentInForm
+    : players
   const lbPlayers = useMemo(() => rankByTab(lbSourcePlayers, lbTab, leaderboardTabs), [lbSourcePlayers, lbTab, leaderboardTabs])
-  const inForm    = useMemo(() => rankInForm(posFilteredPlayers, players), [posFilteredPlayers, players])
   const inFormTitle = IN_FORM_TITLES[posFilter] ?? 'In-Form Players'
   const inFormTab = useMemo(() => ({ ...IN_FORM_TAB, label: inFormTitle }), [inFormTitle])
   const goalkeeperLeaders = useMemo(() => rankGoalkeepers(goalkeepers), [goalkeepers])
