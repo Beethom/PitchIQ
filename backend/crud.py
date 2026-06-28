@@ -1,4 +1,5 @@
 import types
+import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -8,6 +9,8 @@ import re
 import unicodedata
 import time
 from datetime import date, datetime, timezone
+
+log = logging.getLogger(__name__)
 
 
 def get_player(db: Session, player_id: int) -> Optional[models.Player]:
@@ -61,6 +64,82 @@ def _cache_set(key: str, payload):
     except Exception:
         pass
     return payload
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Stale-while-revalidate: user reads NEVER call the provider. They serve the
+# cached value (any age) and, if it's stale, kick a single background refresh.
+# A per-key in-flight guard means 1 visitor or 10,000 visitors trigger the
+# same one refresh — so provider usage is bounded by time, not by traffic.
+# ──────────────────────────────────────────────────────────────────────────
+import threading as _threading
+
+_REFRESH_GUARD = _threading.Lock()
+_REFRESH_INFLIGHT: dict[str, bool] = {}
+
+
+def _cache_entry(key: str):
+    """Return (created_at, payload) from L1/L2 regardless of age, or (0, None)."""
+    item = _WORLD_CUP_PROVIDER_CACHE.get(key)
+    if item:
+        return item
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.query(models.ProviderCache).filter(models.ProviderCache.key == key).first()
+            if row:
+                entry = (row.created_at or 0, row.value)
+                _WORLD_CUP_PROVIDER_CACHE[key] = entry
+                return entry
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return (0, None)
+
+
+def _trigger_refresh(key: str, builder):
+    """Run `builder()` once in the background and cache it (deduped per key)."""
+    with _REFRESH_GUARD:
+        if _REFRESH_INFLIGHT.get(key):
+            return
+        _REFRESH_INFLIGHT[key] = True
+
+    def _run():
+        try:
+            value = builder()
+            if value is not None:
+                _cache_set(key, value)
+        except Exception as exc:  # pragma: no cover - best effort
+            log.warning("Background refresh failed for %s: %s", key, exc)
+        finally:
+            with _REFRESH_GUARD:
+                _REFRESH_INFLIGHT[key] = False
+
+    _threading.Thread(target=_run, name=f"refresh-{key}", daemon=True).start()
+
+
+def stale_while_revalidate(key: str, fresh_seconds: int, builder):
+    """Serve cached value immediately; refresh in the background if stale.
+
+    The provider is only ever hit by the (single, deduped) background refresh —
+    or by one synchronous cold fetch when there is no cached value at all.
+    """
+    created_at, payload = _cache_entry(key)
+    now = time.time()
+    if payload is not None:
+        if now - created_at >= fresh_seconds:
+            _trigger_refresh(key, builder)
+        return payload
+    # Cold start only: build once synchronously so the first ever request works.
+    try:
+        value = builder()
+        if value is not None:
+            _cache_set(key, value)
+        return value
+    except Exception:
+        return None
 
 
 def _season_years(season: str) -> set[int]:
@@ -1179,34 +1258,29 @@ def get_world_cup_match_center(db: Session, limit: int = 12) -> list[dict]:
     return sorted(matches, key=lambda item: item["date"], reverse=True)[:limit]
 
 
-def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
-    from fetcher import _flag_code, _get
-
-    cache_key = f"world_cup_fixtures:{limit}"
-    stale_key = f"world_cup_fixtures_stale:{limit}"
-    cached = _cache_get(cache_key, 60)
-    if cached is not None:
-        return cached
+def _fetch_world_cup_fixtures(limit: int) -> Optional[list[dict]]:
+    """Provider-calling body for the fixtures list (~4 calls). Only ever invoked
+    by the background refresher, never directly on a user request."""
+    from fetcher import _get
 
     events: dict[int, dict] = {}
     fetch_failed = False
-    for endpoint in ("last", "next"):
-        for page_idx in range(2):
-            try:
-                data = _get(f"/api/v1/unique-tournament/16/season/58210/events/{endpoint}/{page_idx}")
-            except Exception:
-                fetch_failed = True
-                break
-            for event in data.get("events", []):
-                fixture = _world_cup_event_payload(event)
-                if fixture:
-                    events[fixture["fixture_id"]] = fixture
+    # 2 calls only: most-recent results + next fixtures. (Full finished totals
+    # come from the DB now, so we don't need to page deep here.)
+    for path in ("last/0", "next/0"):
+        try:
+            data = _get(f"/api/v1/unique-tournament/16/season/58210/events/{path}")
+        except Exception:
+            fetch_failed = True
+            break
+        for event in data.get("events", []):
+            fixture = _world_cup_event_payload(event)
+            if fixture:
+                events[fixture["fixture_id"]] = fixture
 
-    # Provider unavailable/rate-limited: serve the last good result rather than
-    # hanging or returning an empty list.
-    if not events and fetch_failed:
-        stale = _WORLD_CUP_PROVIDER_CACHE.get(stale_key)
-        return stale[1] if stale else []
+    if not events:
+        # Don't overwrite the cached good copy with an empty result on failure.
+        return None if fetch_failed else []
 
     def sort_key(item: dict):
         timestamp = item.get("timestamp") or 0
@@ -1215,65 +1289,64 @@ def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
         time_sort = timestamp if item.get("status_type") != "finished" else -timestamp
         return (0 if is_today else 1, status_rank, time_sort)
 
-    result = sorted(events.values(), key=sort_key)[:limit]
-    _cache_set(stale_key, result)  # long-lived last-good copy for fallback
-    return _cache_set(cache_key, result)
+    return sorted(events.values(), key=sort_key)[:limit]
 
 
-def get_world_cup_goal_total() -> dict:
-    """Total goals scored in the tournament from match scorelines.
+def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
+    """Served from cache; refreshed in the background. No provider calls on the
+    read path. Refresh cadence speeds up while a match is live."""
+    cache_key = f"world_cup_fixtures:{limit}"
+    # Pick freshness from the data we already have: faster while a match is live.
+    _, cached = _cache_entry(cache_key)
+    live = bool(cached) and any(
+        str((m or {}).get("status_type", "")).lower() in ("inprogress", "live")
+        for m in cached
+    )
+    fresh_seconds = 120 if live else 900
+    return stale_while_revalidate(cache_key, fresh_seconds, lambda: _fetch_world_cup_fixtures(limit)) or []
 
-    Summed from final/live scores (which include own goals, unlike a sum of
-    individual player goals) across every finished and in-progress fixture.
-    Pulls the recent-results pages directly so it isn't limited by the
-    fixture-list truncation, and caches briefly.
+
+def get_world_cup_goal_total(db: Session) -> dict:
+    """Total tournament goals — computed with ZERO provider calls.
+
+    Finished matches come from synced data in the DB (each fixture's scoreline
+    reconstructed from players' goalsConceded, which includes own goals). Live
+    matches are read from the cached fixtures list. Nothing here hits the API.
     """
-    from fetcher import _get
+    # Finished matches: reconstruct each fixture's scoreline from the DB.
+    per_fixture: dict[int, dict[int, int]] = {}
+    rows = (
+        db.query(
+            models.PlayerMatchStat.fixture_id,
+            models.PlayerMatchStat.source_team_id,
+            models.PlayerMatchStat.stats,
+        )
+        .filter(
+            models.PlayerMatchStat.source_league_id == 16,
+            models.PlayerMatchStat.source_season == 58210,
+        )
+        .all()
+    )
+    for fid, tid, stats in rows:
+        gc = (stats or {}).get("goalsConceded")
+        if gc is not None:
+            teams = per_fixture.setdefault(fid, {})
+            teams[tid] = max(teams.get(tid, 0), gc)
 
-    cache_key = "world_cup_goal_total"
-    cached = _cache_get(cache_key, 60)
-    if cached is not None:
-        return cached
+    finished_total = sum(sum(teams.values()) for teams in per_fixture.values())
+    finished_count = len(per_fixture)
 
-    events: dict[int, dict] = {}
-    failed = False
-    # `last` pages carry every finished match; `next/0` catches kickoffs that
-    # have just gone live.
-    for endpoint, pages in (("last", 6), ("next", 1)):
-        for page_idx in range(pages):
-            try:
-                data = _get(f"/api/v1/unique-tournament/16/season/58210/events/{endpoint}/{page_idx}")
-            except Exception:
-                failed = True
-                break
-            evs = data.get("events", [])
-            if not evs:
-                break
-            for ev in evs:
-                eid = ev.get("id")
-                if eid:
-                    events[eid] = ev
+    # Live matches: from the cached fixtures list (no provider call).
+    live_total = live_count = 0
+    for m in get_world_cup_fixtures(limit=80):
+        if str(m.get("status_type", "")).lower() in ("inprogress", "live") and m.get("fixture_id") not in per_fixture:
+            h = (m.get("home") or {}).get("score")
+            a = (m.get("away") or {}).get("score")
+            if isinstance(h, int) and isinstance(a, int):
+                live_total += h + a
+                live_count += 1
 
-    if not events and failed:
-        stale = _WORLD_CUP_PROVIDER_CACHE.get(cache_key)
-        return stale[1] if stale else {"total": None, "finished": 0, "live": 0}
-
-    total = finished = live = 0
-    for ev in events.values():
-        stype = (ev.get("status") or {}).get("type")
-        if stype not in ("finished", "inprogress"):
-            continue
-        h = (ev.get("homeScore") or {}).get("current")
-        a = (ev.get("awayScore") or {}).get("current")
-        if isinstance(h, int) and isinstance(a, int):
-            total += h + a
-            if stype == "finished":
-                finished += 1
-            else:
-                live += 1
-
-    result = {"total": total, "finished": finished, "live": live}
-    return _cache_set(cache_key, result)
+    return {"total": finished_total + live_total, "finished": finished_count, "live": live_count}
 
 
 def _world_cup_team_payload(team: dict, score: Optional[dict]) -> dict:

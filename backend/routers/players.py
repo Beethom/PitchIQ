@@ -92,8 +92,8 @@ def world_cup_fixtures(
 
 
 @router.get("/world-cup/goal-total")
-def world_cup_goal_total():
-    return crud.get_world_cup_goal_total()
+def world_cup_goal_total(db: Session = Depends(get_db)):
+    return crud.get_world_cup_goal_total(db)
 
 
 @router.get("/world-cup/matches/{fixture_id}", response_model=schemas.WorldCupMatchDetail)

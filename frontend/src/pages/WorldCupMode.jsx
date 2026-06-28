@@ -218,7 +218,7 @@ export default function WorldCupMode() {
         )
         setHasLiveMatch(live)
         try {
-          const gt = await playerService.getWorldCupGoalTotal({ force: true })
+          const gt = await playerService.getWorldCupGoalTotal()
           if (!cancelled && gt && typeof gt.total === 'number') setGoalTotal(gt.total)
         } catch { /* keep last known total */ }
       } catch {
