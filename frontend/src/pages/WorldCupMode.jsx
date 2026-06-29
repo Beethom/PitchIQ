@@ -637,8 +637,10 @@ const SCORE_BAR_COLORS = ['bg-red-500', 'bg-sky-500', 'bg-violet-500', 'bg-emera
 // Position-aware percentile breakdown (each bar = top X% for the player's role).
 function ScoreBars({ bars = [] }) {
   if (!bars.length) return null
+  // 6 bars (strikers) → 3 columns; otherwise one column per bar (max 4).
+  const cols = bars.length === 6 ? 3 : Math.min(bars.length, 4)
   return (
-    <div className="mt-2 grid grid-cols-4 gap-1">
+    <div className="mt-2 grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {bars.map(({ label, value }, i) => (
         <div key={label}>
           <div className="flex items-center justify-between mb-0.5">
@@ -1122,18 +1124,133 @@ function calculateBonuses(player, fns) {
 }
 
 // Final 0–100 in-form score for one player (given its cohort percentile fns).
-function calculateInFormScore(player, percentileFns, teamTotals) {
-  const raw = calculateRawImpact(player, percentileFns)               // 0…1
+/* ─────────────── Striker benchmark — dedicated, less-repetitive profile ──────
+   Six dimensions, each a blend of raw metrics turned into percentiles within the
+   striker cohort, so each bar measures something genuinely DIFFERENT:
+     BUTS     = scoring output         (goals, non-penalty goals)
+     MENACE   = attacking threat       (xG, shots on target, total shots)  ← replaces raw TIRS
+     FINITION = finishing efficiency   (goals−xG, conversion, SoT conversion, big chances missed⁻)
+     CRÉA     = chance creation        (assists, xA, key passes, big chances created)
+     MOBILITÉ = movement / self-danger (successful dribbles, dribble %, progressive carries)
+     PRESSING = defensive work         (recoveries, tackles, interceptions)
+   Secondary skills (CRÉA/MOBILITÉ/PRESSING) earn a small, capped completeness
+   bonus — but only on top of scoring, so they can't carry a non-scorer.        */
+
+function safeNumber(value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+// Percentile (0–100) of `value` within a sorted cohort array.
+function normalizePercentile(value, sortedCohort) {
+  if (!sortedCohort || !sortedCohort.length) return 0
+  let count = 0
+  for (const x of sortedCohort) { if (x <= value) count++ }
+  return (count / sortedCohort.length) * 100
+}
+
+// Raw per-90 / rate metrics feeding the striker bars (missing data → 0).
+function strikerMetricValues(stats) {
+  const s = stats ?? {}
+  const mins = safeNumber(s.minutesPlayed)
+  const per90 = (v) => (mins > 0 ? (safeNumber(v) / mins) * 90 : 0)
+  const shots = safeNumber(s.shots)
+  const sot = safeNumber(s.shotsOnTarget)
+  const goals = safeNumber(s.goals)
+  const npGoals = Math.max(0, goals - safeNumber(s.penaltyGoals))
+  return {
+    goals90: per90(goals),
+    npGoals90: per90(npGoals),
+    xg90: per90(s.xG),
+    sot90: per90(sot),
+    shots90: per90(shots),
+    finishing: goals - safeNumber(s.xG),                 // goals over expected
+    conversion: shots > 0 ? goals / shots : 0,
+    sotConversion: sot > 0 ? goals / sot : 0,
+    bigChancesMissed90: per90(s.bigChancesMissed),       // penalty (inverted in the bar)
+    assists90: per90(s.assists),
+    xa90: per90(s.xA),
+    keyPasses90: per90(s.keyPasses),
+    bigChancesCreated90: per90(s.bigChancesCreated),
+    dribbles90: per90(safeNumber(s.dribbles) * (safeNumber(s.dribbleSuccess) / 100)),
+    dribbleRate: safeNumber(s.dribbleSuccess),
+    progCarries90: per90(s.progressiveCarries),
+    recoveries90: per90(s.recoveries),
+    tackles90: per90(s.tackles),
+    interceptions90: per90(s.interceptions),
+  }
+}
+
+// Metrics averaged into each bar. A leading "-" means lower-is-better (inverted).
+const STRIKER_BAR_METRICS = {
+  buts:     ['goals90', 'npGoals90'],
+  menace:   ['xg90', 'sot90', 'shots90'],
+  finition: ['finishing', 'conversion', 'sotConversion', '-bigChancesMissed90'],
+  crea:     ['assists90', 'xa90', 'keyPasses90', 'bigChancesCreated90'],
+  mobilite: ['dribbles90', 'dribbleRate', 'progCarries90'],
+  pressing: ['recoveries90', 'tackles90', 'interceptions90'],
+}
+
+const STRIKER_WEIGHTS = { buts: 0.30, menace: 0.20, finition: 0.20, crea: 0.12, mobilite: 0.10, pressing: 0.08 }
+
+// Build the six striker bars (0–100) for a player against the striker cohort.
+// `cohort` = { metricKey: sortedValues } across all qualifying strikers.
+function calculateStrikerBars(player, cohort) {
+  const m = strikerMetricValues(player.stats)
+  const bar = (keys) => {
+    const pcts = keys.map((key) => {
+      const neg = key.startsWith('-')
+      const k = neg ? key.slice(1) : key
+      const pct = normalizePercentile(m[k], cohort[k])
+      return neg ? 100 - pct : pct
+    })
+    return Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length)
+  }
+  return {
+    buts: bar(STRIKER_BAR_METRICS.buts),
+    menace: bar(STRIKER_BAR_METRICS.menace),
+    finition: bar(STRIKER_BAR_METRICS.finition),
+    crea: bar(STRIKER_BAR_METRICS.crea),
+    mobilite: bar(STRIKER_BAR_METRICS.mobilite),
+    pressing: bar(STRIKER_BAR_METRICS.pressing),
+  }
+}
+
+// Overall striker score (0–100) + a small capped completeness bonus that
+// rewards a scorer who ALSO creates / dribbles / presses (never a non-scorer).
+function calculateStrikerOverallScore(player, cohort) {
+  const bars = calculateStrikerBars(player, cohort)
+  let weighted = 0
+  for (const [k, w] of Object.entries(STRIKER_WEIGHTS)) weighted += bars[k] * w   // 0–100
+
+  const bonusBreakdown = []
+  let bonus = 0
+  if (bars.buts >= 80 && bars.crea >= 70) { bonus += 0.03; bonusBreakdown.push('scorer + creator (+3%)') }
+  if (bars.buts >= 80 && bars.mobilite >= 70) { bonus += 0.03; bonusBreakdown.push('scorer + dribbler (+3%)') }
+  if (bars.buts >= 80 && bars.pressing >= 70) { bonus += 0.02; bonusBreakdown.push('scorer + presser (+2%)') }
+  bonus = Math.min(0.08, bonus)
+
+  return { bars, score: Math.min(100, weighted * (1 + bonus)), bonusBreakdown }
+}
+
+// Display order + labels for the striker bars (English keys → FR via translations).
+const STRIKER_BAR_LABELS = [
+  ['Goals', 'buts'], ['Threat', 'menace'], ['Finish', 'finition'],
+  ['Creation', 'crea'], ['Mobility', 'mobilite'], ['Pressing', 'pressing'],
+]
+
+// Combine a 0–1 raw impact + bonus into the final 0–100 in-form score,
+// applying availability shrinkage, consistency, recent form, match influence
+// and team contribution (shared by every position).
+function combineInFormScore(player, rawImpact, bonus, teamTotals) {
   const confidence = calculateAvailability(player.stats ?? {})        // 0…1
-  const adjusted = 0.5 + (raw - 0.5) * confidence                     // shrink to median
+  const adjusted = 0.5 + (rawImpact - 0.5) * confidence               // shrink to median
   const base = adjusted * 100
     * calculateConsistency(player.form)
     * calculateRecentForm(player.form)
     * calculateMatchInfluence(player.form)
     * calculateTeamContribution(player, teamTotals)
-  // Bonuses are confidence-scaled too, so small samples can't farm them.
-  const bonus = calculateBonuses(player, percentileFns) * confidence
-  return Math.max(0, Math.min(100, base + bonus))
+  return Math.max(0, Math.min(100, base + bonus * confidence))
 }
 
 // Aggregate each team's totals so a player's share of output can be measured.
@@ -1184,11 +1301,33 @@ function scoreInFormPool(players, allPlayers = players) {
     groupPercentileFns[group] = fns
   }
 
+  // Striker cohort: sorted distributions for every striker-bar metric, so the
+  // dedicated striker model can percentile-rank each metric within strikers.
+  const strikerCohort = {}
+  const stMembers = byGroup.ST ?? []
+  if (stMembers.length) {
+    const vals = stMembers.map((p) => strikerMetricValues(p.stats))
+    for (const key of Object.keys(vals[0])) {
+      strikerCohort[key] = vals.map((v) => v[key]).sort((a, b) => a - b)
+    }
+  }
+
   return candidates.map((p) => {
-    const fns = groupPercentileFns[getPositionGroup(p.position)] ?? {}
+    const g = getPositionGroup(p.position)
+    if (g === 'ST') {
+      // Strikers use the dedicated 6-bar benchmark (its completeness bonus is
+      // baked into `score`, so no generic bonus is added here).
+      const { bars, score } = calculateStrikerOverallScore(p, strikerCohort)
+      return {
+        ...p,
+        inFormScore: combineInFormScore(p, score / 100, 0, teamTotals),
+        inFormBars: STRIKER_BAR_LABELS.map(([label, key]) => ({ label, value: bars[key] })),
+      }
+    }
+    const fns = groupPercentileFns[g] ?? {}
     return {
       ...p,
-      inFormScore: calculateInFormScore(p, fns, teamTotals),
+      inFormScore: combineInFormScore(p, calculateRawImpact(p, fns), calculateBonuses(p, fns), teamTotals),
       inFormBars: buildInFormBars(p, fns),
     }
   })
