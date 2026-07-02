@@ -1306,47 +1306,57 @@ def get_world_cup_fixtures(limit: int = 24) -> list[dict]:
     return stale_while_revalidate(cache_key, fresh_seconds, lambda: _fetch_world_cup_fixtures(limit)) or []
 
 
-def get_world_cup_goal_total(db: Session) -> dict:
-    """Total tournament goals — computed with ZERO provider calls.
+def _build_world_cup_goal_total() -> dict:
+    """Sum every match's real scoreline. Uses `display` (regulation + extra time)
+    which EXCLUDES penalty-shootout goals — for a shootout the feed's `current`
+    is normaltime + penalties (a 1-1 on pens shows current 4-5), while `display`
+    is the true 1-1. Official goal counts never include shootout goals."""
+    from fetcher import _get
 
-    Finished matches come from synced data in the DB (each fixture's scoreline
-    reconstructed from players' goalsConceded, which includes own goals). Live
-    matches are read from the cached fixtures list. Nothing here hits the API.
-    """
-    # Finished matches: reconstruct each fixture's scoreline from the DB.
-    per_fixture: dict[int, dict[int, int]] = {}
-    rows = (
-        db.query(
-            models.PlayerMatchStat.fixture_id,
-            models.PlayerMatchStat.source_team_id,
-            models.PlayerMatchStat.stats,
-        )
-        .filter(
-            models.PlayerMatchStat.source_league_id == 16,
-            models.PlayerMatchStat.source_season == 58210,
-        )
-        .all()
-    )
-    for fid, tid, stats in rows:
-        gc = (stats or {}).get("goalsConceded")
-        if gc is not None:
-            teams = per_fixture.setdefault(fid, {})
-            teams[tid] = max(teams.get(tid, 0), gc)
+    events: dict[int, dict] = {}
+    failed = False
+    # `last` pages hold every finished match; `next/0` catches live kickoffs.
+    for path in ("last/0", "last/1", "last/2", "last/3", "next/0"):
+        try:
+            data = _get(f"/api/v1/unique-tournament/16/season/58210/events/{path}")
+        except Exception:
+            failed = True
+            break
+        evs = data.get("events", [])
+        if not evs and path.startswith("last"):
+            break
+        for ev in evs:
+            eid = ev.get("id")
+            if eid:
+                events[eid] = ev
 
-    finished_total = sum(sum(teams.values()) for teams in per_fixture.values())
-    finished_count = len(per_fixture)
+    if not events and failed:
+        return None  # keep last good cached value
 
-    # Live matches: from the cached fixtures list (no provider call).
-    live_total = live_count = 0
-    for m in get_world_cup_fixtures(limit=80):
-        if str(m.get("status_type", "")).lower() in ("inprogress", "live") and m.get("fixture_id") not in per_fixture:
-            h = (m.get("home") or {}).get("score")
-            a = (m.get("away") or {}).get("score")
-            if isinstance(h, int) and isinstance(a, int):
-                live_total += h + a
-                live_count += 1
+    total = finished = live = 0
+    for ev in events.values():
+        stype = (ev.get("status") or {}).get("type")
+        if stype not in ("finished", "inprogress"):
+            continue
+        # `display` = match result (regulation + ET), excluding any shootout.
+        hs = ev.get("homeScore") or {}
+        as_ = ev.get("awayScore") or {}
+        h = hs.get("display", hs.get("current"))
+        a = as_.get("display", as_.get("current"))
+        if isinstance(h, int) and isinstance(a, int):
+            total += h + a
+            if stype == "finished":
+                finished += 1
+            else:
+                live += 1
+    return {"total": total, "finished": finished, "live": live}
 
-    return {"total": finished_total + live_total, "finished": finished_count, "live": live_count}
+
+def get_world_cup_goal_total(db: Session = None) -> dict:
+    """Tournament goal total from regulation scorelines (excludes shootouts).
+    Served from cache; refreshed in the background so reads stay cheap."""
+    result = stale_while_revalidate("world_cup_goal_total_v3", 180, _build_world_cup_goal_total)
+    return result or {"total": None, "finished": 0, "live": 0}
 
 
 def _world_cup_team_payload(team: dict, score: Optional[dict]) -> dict:

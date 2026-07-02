@@ -191,7 +191,7 @@ export default function WorldCupMode() {
   }, [leaderboardTabs, lbTab])
   // In-Form panel respects the position/U23 controls (its own filters).
   const scoredInForm = useMemo(() => scoreInFormPool(posFilteredPlayers, players), [posFilteredPlayers, players])
-  const inForm = useMemo(() => scoredInForm.slice().sort((a, b) => b.inFormScore - a.inFormScore).slice(0, 8), [scoredInForm])
+  const inForm = useMemo(() => scoredInForm.slice().sort((a, b) => b.inFormScore - a.inFormScore).slice(0, 15), [scoredInForm])
 
   // Tournament Leaders are tournament-wide — NOT affected by the position/U23
   // filters (those belong to the In-Form section only).
@@ -661,7 +661,7 @@ function InFormList({ players }) {
 
   return (
     <div className="grid gap-3 lg:grid-cols-2">
-      {players.slice(0, 8).map((player, index) => {
+      {players.slice(0, 15).map((player, index) => {
         const stats = player.stats ?? {}
         return (
           <Link
@@ -1360,7 +1360,7 @@ function goalkeeperImpactScore(player) {
 function rankInForm(players, allPlayers = players) {
   return scoreInFormPool(players, allPlayers)
     .sort((a, b) => b.inFormScore - a.inFormScore)
-    .slice(0, 8)
+    .slice(0, 15)
 }
 
 function rankGoalkeepers(players) {
